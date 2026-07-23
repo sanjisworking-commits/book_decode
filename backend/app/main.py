@@ -18,8 +18,8 @@ settings = get_settings()
 
 app = FastAPI(
     title="According to Logic — Book Decode",
-    description="Phase 1: EPUB upload, Docling conversion, chapter detection.",
-    version="0.1.0",
+    description="Phase 2: EPUB ingest, Docling conversion, normalisation, chunking.",
+    version="0.2.0",
 )
 
 app.add_middleware(
@@ -37,4 +37,4 @@ app.include_router(demo_router)
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "phase": "1"}
+    return {"status": "ok", "phase": "2"}

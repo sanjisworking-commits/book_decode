@@ -86,11 +86,11 @@ class BookService:
         if not book:
             raise KeyError(book_id)
         status = book["processing_status"]
-        phase1_idle_complete = (
-            status == BookProcessingStatus.DETECTING_CHAPTERS.value
-            and (book.get("chapter_count") or 0) > 0
-        )
-        if status in _ACTIVE_STATUSES and not phase1_idle_complete:
+        phase_idle_complete = (book.get("chapter_count") or 0) > 0 and status in {
+            BookProcessingStatus.DETECTING_CHAPTERS.value,
+            BookProcessingStatus.PREPARING_BLOCKS.value,
+        }
+        if status in _ACTIVE_STATUSES and not phase_idle_complete:
             raise RuntimeError("already_processing")
 
         job_id = f"job-{uuid.uuid4().hex[:10]}"
@@ -108,8 +108,26 @@ class BookService:
         return self.get_status(book_id)
 
     def run_ingest_sync(self, book_id: str) -> None:
-        """Run Phase 1 ingest (called from background task or tests)."""
+        """Run Phase 1–2 ingest (called from background task or tests)."""
         self.ingest.run(book_id)
+
+    def get_chapter_source(self, book_id: str, chapter_id: str) -> dict[str, Any]:
+        book = self.db.get_book(book_id)
+        if not book:
+            raise KeyError(book_id)
+        path = self.fs.chapter_source_path(book_id, chapter_id)
+        if not path.exists():
+            raise FileNotFoundError(chapter_id)
+        return self.fs.read_json(path)
+
+    def get_chapter_chunks(self, book_id: str, chapter_id: str) -> dict[str, Any]:
+        book = self.db.get_book(book_id)
+        if not book:
+            raise KeyError(book_id)
+        path = self.fs.chapter_chunks_path(book_id, chapter_id)
+        if not path.exists():
+            raise FileNotFoundError(chapter_id)
+        return self.fs.read_json(path)
 
     def get_metadata(self, book_id: str) -> BookMetadata:
         book = self.db.get_book(book_id)
