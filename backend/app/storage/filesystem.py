@@ -62,11 +62,15 @@ class FilesystemStore:
         return self.chapters_dir(book_id) / f"{chapter_id}.spine.partial.{safe}.json"
 
     def chapter_spine_candidate_path(self, book_id: str, chapter_id: str) -> Path:
-        """English spine candidate after Phase 3 (pre-synthesis / single-chunk)."""
+        """English spine candidate after Phase 3–4 (full spine after synthesis)."""
         return self.chapters_dir(book_id) / f"{chapter_id}.spine.candidate.json"
 
+    def chapter_spine_en_path(self, book_id: str, chapter_id: str) -> Path:
+        """English chapter spine after Phase 4 synthesis."""
+        return self.chapters_dir(book_id) / f"{chapter_id}.spine.en.json"
+
     def chapter_spine_path(self, book_id: str, chapter_id: str) -> Path:
-        """Final bilingual spine (Phases 4–5); may not exist yet."""
+        """Final bilingual spine (Phase 5+); may not exist yet."""
         return self.chapters_dir(book_id) / f"{chapter_id}.spine.json"
 
     def write_json(self, path: Path, payload: Any) -> None:
