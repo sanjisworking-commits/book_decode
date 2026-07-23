@@ -2,9 +2,9 @@
 
 ## Current phase
 
-**Phase 2 — Normalisation and chunking**
+**Phase 2 — Canonical normalisation and chunking**
 
-Builds on Phase 1 (upload + Docling + chapter detection) by assigning stable source-block IDs, writing per-chapter `*.source.json`, and producing structure-first chunk plans.
+Builds on Phase 1 (upload + Docling + chapter detection) by producing hierarchical `book.json` (schema 2.0), emitting compatible per-chapter `*.source.json`, and structure-first chunk plans. Spec: [`docs/CANONICAL_BOOK_SCHEMA.md`](../docs/CANONICAL_BOOK_SCHEMA.md).
 
 Argument Spine generation is **not** included (Phases 3–5).
 
@@ -38,6 +38,7 @@ Health check: `GET http://localhost:8000/health` → `{"phase":"2"}`
 | GET | `/books/{id}/status` | Real processing status |
 | GET | `/books/{id}` | Book metadata |
 | GET | `/books/{id}/chapters` | Detected chapter list |
+| GET | `/books/{id}/canonical` | Canonical hierarchical `book.json` |
 | GET | `/books/{id}/chapters/{cid}/source` | Normalised source chapter JSON |
 | GET | `/books/{id}/chapters/{cid}/chunks` | Chunk plan for extraction |
 | DELETE | `/books/{id}` | Delete book artefacts |
@@ -58,6 +59,7 @@ After a successful process job:
 - `processing_status` = `preparing_blocks`
 - `current_stage` = `preparing_chapter_blocks`
 - `chapter_count` > 0
+- `data/books/{book_id}/book.json` (canonical schema 2.0)
 - Per chapter:
   - `data/books/{book_id}/chapters/{chapter_id}.source.json`
   - `data/books/{book_id}/chapters/{chapter_id}.chunks.json`

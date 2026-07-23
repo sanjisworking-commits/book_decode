@@ -1,4 +1,4 @@
-"""Ingestion pipeline: Phase 1 (Docling + chapters) + Phase 2 (normalise + chunk)."""
+"""Ingestion pipeline: Phase 1 (Docling) + Phase 2 (canonical normalise + chunk)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,11 @@ from app.domain.enums import BookProcessingStatus, ChapterStatus, UIStage
 from app.pipelines.chapter_detect import detect_chapters_from_docling
 from app.pipelines.chunk import chunk_source_chapter, validate_chunk_allow_lists
 from app.pipelines.docling_convert import convert_epub_with_docling
-from app.pipelines.normalise import assert_unique_block_ids, normalise_chapter_from_docling
+from app.pipelines.normalise import (
+    assert_unique_block_ids,
+    normalise_book_from_docling,
+    to_source_chapter,
+)
 from app.storage.filesystem import FilesystemStore
 from app.storage.sqlite_store import SqliteStore
 from app.utils.ids import utc_now_iso
@@ -35,7 +39,7 @@ class IngestPipeline:
         settings = get_settings()
 
         try:
-            # --- Phase 1: structure + chapter detection ---
+            # --- Phase 1: Docling + preview chapter detection ---
             self._set_status(
                 book_id,
                 BookProcessingStatus.READING_STRUCTURE,
@@ -51,21 +55,30 @@ class IngestPipeline:
                 UIStage.DETECTING_CHAPTERS,
                 job_id=job_id,
             )
-            chapters = detect_chapters_from_docling(docling_json)
-            if not chapters:
-                raise RuntimeError("No chapters detected in EPUB structure.")
+            preview_chapters = detect_chapters_from_docling(docling_json)
+            self.fs.write_json(
+                self.fs.chapters_preview_path(book_id), {"chapters": preview_chapters}
+            )
 
-            self.fs.write_json(self.fs.chapters_preview_path(book_id), {"chapters": chapters})
-            self.db.replace_chapters(book_id, chapters)
-            self.db.update_book(book_id, chapter_count=len(chapters))
-
-            # --- Phase 2: normalisation + chunking ---
+            # --- Phase 2: canonical normalisation (authoritative structure) ---
             self._set_status(
                 book_id,
                 BookProcessingStatus.PREPARING_BLOCKS,
                 UIStage.PREPARING_CHAPTER_BLOCKS,
                 job_id=job_id,
             )
+            canonical = normalise_book_from_docling(
+                book_id=book_id,
+                docling_json=docling_json,
+                title=book.get("title"),
+                author=book.get("author"),
+                language=book.get("language"),
+            )
+            self.fs.write_json(self.fs.book_json_path(book_id), canonical)
+
+            chapters = canonical.get("chapters") or []
+            if not chapters:
+                raise RuntimeError("Canonical normalisation produced no chapters.")
 
             normalised_summaries: list[dict[str, Any]] = []
             updated_chapters: list[dict[str, Any]] = []
@@ -74,21 +87,23 @@ class IngestPipeline:
                 chapter_id = ch["chapter_id"]
                 self.db.update_book(book_id, current_chapter_id=chapter_id)
 
-                source = normalise_chapter_from_docling(
-                    book_id=book_id, chapter=ch, docling_json=docling_json
-                )
+                source = to_source_chapter(canonical, chapter_id)
                 if not source.get("source_blocks"):
-                    # Empty / malformed chapter — mark failed, continue others
-                    failed = {
-                        **ch,
-                        "status": ChapterStatus.FAILED.value,
-                        "error": {
-                            "code": "empty_chapter",
-                            "message": "No source blocks after normalisation.",
-                            "details": None,
-                        },
-                    }
-                    updated_chapters.append(failed)
+                    updated_chapters.append(
+                        {
+                            "chapter_id": chapter_id,
+                            "title": ch.get("title"),
+                            "chapter_number": ch.get("chapter_number"),
+                            "order_index": ch.get("order_index", 0),
+                            "status": ChapterStatus.FAILED.value,
+                            "retry_count": 0,
+                            "error": {
+                                "code": "empty_chapter",
+                                "message": "No source blocks after normalisation.",
+                                "details": None,
+                            },
+                        }
+                    )
                     continue
 
                 assert_unique_block_ids(source)
@@ -104,14 +119,18 @@ class IngestPipeline:
 
                 updated_chapters.append(
                     {
-                        **ch,
+                        "chapter_id": chapter_id,
+                        "title": ch.get("title"),
+                        "chapter_number": ch.get("chapter_number"),
+                        "order_index": ch.get("order_index", 0),
                         "status": ChapterStatus.PENDING.value,
+                        "retry_count": 0,
                         "error": None,
                         "preview": {
-                            **(ch.get("preview") or {}),
                             "block_count": len(source["source_blocks"]),
                             "chunk_count": len(chunk_plan.get("chunks") or []),
                             "chunk_strategy": chunk_plan.get("strategy"),
+                            "section_count": len(ch.get("sections") or []),
                         },
                     }
                 )
@@ -152,8 +171,10 @@ class IngestPipeline:
                     "converter": "docling",
                 },
                 "phase2": {
-                    "note": "Phase 2 complete: stable source-block IDs and chunk plans ready. "
-                    "AI Argument Spine extraction begins in Phase 3.",
+                    "note": "Phase 2 complete: canonical book.json + source blocks + chunk plans.",
+                    "canonical_schema_version": "2.0",
+                    "book_json_path": str(self.fs.book_json_path(book_id)),
+                    "part_count": len(canonical.get("parts") or []),
                     "chapters": normalised_summaries,
                 },
             }

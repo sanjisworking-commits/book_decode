@@ -44,7 +44,7 @@ def test_normalise_docling_assigns_unique_stable_ids() -> None:
     source = normalise_chapter_from_docling(
         book_id="demo-book", chapter=chapter, docling_json=docling
     )
-    assert source["schema_version"] == "1.0"
+    assert source["schema_version"] == "2.0"
     assert source["book_id"] == "demo-book"
     assert len(source["source_blocks"]) >= 3
     assert_unique_block_ids(source)

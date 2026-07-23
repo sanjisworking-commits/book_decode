@@ -41,6 +41,9 @@ class FilesystemStore:
     def metadata_path(self, book_id: str) -> Path:
         return self.book_dir(book_id) / "metadata.json"
 
+    def book_json_path(self, book_id: str) -> Path:
+        return self.book_dir(book_id) / "book.json"
+
     def chapters_dir(self, book_id: str) -> Path:
         path = self.book_dir(book_id) / "chapters"
         path.mkdir(parents=True, exist_ok=True)

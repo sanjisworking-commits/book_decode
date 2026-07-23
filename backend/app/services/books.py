@@ -120,6 +120,15 @@ class BookService:
             raise FileNotFoundError(chapter_id)
         return self.fs.read_json(path)
 
+    def get_canonical_book(self, book_id: str) -> dict[str, Any]:
+        book = self.db.get_book(book_id)
+        if not book:
+            raise KeyError(book_id)
+        path = self.fs.book_json_path(book_id)
+        if not path.exists():
+            raise FileNotFoundError(book_id)
+        return self.fs.read_json(path)
+
     def get_chapter_chunks(self, book_id: str, chapter_id: str) -> dict[str, Any]:
         book = self.db.get_book(book_id)
         if not book:
