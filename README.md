@@ -1,0 +1,104 @@
+# According to Logic — Book Decode
+
+Prototype that turns an uploaded **EPUB** into a source-grounded, chapter-level **Argument Spine**, available in **English** and **Hindi-English**.
+
+```text
+EPUB → chapter extraction → AI Argument Spine → English + Hindi-English → interactive book interface
+```
+
+This is **not** an ebook reader, general summariser, chatbot, or bookstore.
+
+## Current phase
+
+**Phase 0 — Planning and repository setup**
+
+Documentation, architecture, JSON Schemas, prompt stubs, and empty app scaffolds are in place.  
+**No application runtime, LLM calls, or EPUB processing in this phase.**
+
+Argument Spine content is generated later by the AI pipeline from user-uploaded EPUBs.  
+**Do not hardcode chapter claims, assumptions, or counters in the frontend.**
+
+## MVP stack (decided)
+
+| Layer | Choice |
+|-------|--------|
+| Backend | Python 3.11+ / FastAPI |
+| EPUB extraction | Docling |
+| LLM | OpenAI-compatible API via env |
+| Hindi-English | Same LLM + dedicated prompt |
+| Storage | Local filesystem + SQLite |
+| Frontend | React + TypeScript + Vite |
+| Contracts | JSON Schema in `schemas/` |
+
+## Repository map
+
+```text
+docs/           Planning and specification
+schemas/        Shared JSON Schema contracts
+backend/        FastAPI app scaffold + prompts (implementation later)
+frontend/       Vite React scaffold (implementation later)
+data/           Runtime uploads/processed/books/logs (gitignored contents)
+sample-data/    Structural reference fixtures only
+scripts/        Utility scripts (later)
+```
+
+## Documentation index
+
+| Document | Description |
+|----------|-------------|
+| [Product Overview](docs/PRODUCT_OVERVIEW.md) | Problem, objective, roles |
+| [MVP Scope](docs/MVP_SCOPE.md) | In / out of scope |
+| [User Flow](docs/USER_FLOW.md) | End-to-end UX path |
+| [System Architecture](docs/SYSTEM_ARCHITECTURE.md) | Components and boundaries |
+| [AI Pipeline](docs/AI_PIPELINE.md) | Ingest → extract → adapt |
+| [Argument Spine Specification](docs/ARGUMENT_SPINE_SPECIFICATION.md) | Node types and fields |
+| [Data Schema](docs/DATA_SCHEMA.md) | Book / chapter / spine model |
+| [Prompt Architecture](docs/PROMPT_ARCHITECTURE.md) | Prompt file responsibilities |
+| [API Specification](docs/API_SPECIFICATION.md) | Planned HTTP endpoints |
+| [Processing States](docs/PROCESSING_STATES.md) | Real progress and retries |
+| [Source Integrity Rules](docs/SOURCE_INTEGRITY_RULES.md) | Stable block IDs |
+| [Design Brief for Claude](docs/DESIGN_BRIEF_FOR_CLAUDE.md) | Visual handoff |
+| [Testing Strategy](docs/TESTING_STRATEGY.md) | Test layers |
+| [Implementation Roadmap](docs/IMPLEMENTATION_ROADMAP.md) | Phases 0–8 |
+| [Acceptance Criteria](docs/ACCEPTANCE_CRITERIA.md) | MVP done-when |
+| [Risks and Limitations](docs/RISKS_AND_LIMITATIONS.md) | Risks and decision log |
+| [Future Scope](docs/FUTURE_SCOPE.md) | Explicit non-MVP |
+
+## Deliverable → location
+
+| Deliverable | Location |
+|-------------|----------|
+| Project documentation | `docs/` |
+| JSON Schemas | `schemas/` |
+| Prompt files | `backend/app/prompts/` |
+| Backend (later) | `backend/` |
+| Frontend (later) | `frontend/` |
+| Env example | `.env.example` |
+| License | `LICENSE` |
+| Structural EPUB-derived reference | `sample-data/reference/` |
+
+## Sample data note
+
+`sample-data/reference/a_thousand_brains_clean.json` is a **pre-normalisation structural fixture** for later ingestion/normalisation tests. It is **not** Argument Spine content. See [sample-data/README.md](sample-data/README.md).
+
+## Setup (later phases)
+
+```bash
+cp .env.example .env
+# Phase 1+: install backend/frontend dependencies and run services
+```
+
+Environment variables are documented in [`.env.example`](.env.example).
+
+## Role separation
+
+| Role | Responsibility |
+|------|----------------|
+| AI pipeline | Generate Argument Spine from EPUB chapters |
+| Cursor | Platform: process, validate, store, API, implement UI |
+| Claude Design | Visual design system and interaction states |
+| GitHub | Single source of truth |
+
+## License
+
+MIT — see [LICENSE](LICENSE).
