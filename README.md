@@ -10,9 +10,9 @@ This is **not** an ebook reader, general summariser, chatbot, or bookstore.
 
 ## Current phase
 
-**Phase 2 — Normalisation and chunking (feature branch)**
+**Phase 2 — Canonical normalisation and chunking**
 
-Phase 0 planning and Phase 1 EPUB ingestion are on `main`. Phase 2 adds stable source-block IDs, per-chapter source JSON, and structure-first chunk plans. See [`backend/README.md`](backend/README.md).
+Phase 0–2 are on `main` / Phase 2 branch. Authoritative artefact is hierarchical `book.json` (schema 2.0); per-chapter `*.source.json` remains for chunking. See [`docs/CANONICAL_BOOK_SCHEMA.md`](docs/CANONICAL_BOOK_SCHEMA.md) and [`backend/README.md`](backend/README.md).
 
 Argument Spine content is generated later by the AI pipeline from user-uploaded EPUBs.  
 **Do not hardcode chapter claims, assumptions, or counters in the frontend.**
@@ -52,6 +52,7 @@ scripts/        Utility scripts (later)
 | [AI Pipeline](docs/AI_PIPELINE.md) | Ingest → extract → adapt |
 | [Argument Spine Specification](docs/ARGUMENT_SPINE_SPECIFICATION.md) | Node types and fields |
 | [Data Schema](docs/DATA_SCHEMA.md) | Book / chapter / spine model |
+| [Canonical Book Schema](docs/CANONICAL_BOOK_SCHEMA.md) | Lossless `book.json` (schema 2.0) |
 | [Prompt Architecture](docs/PROMPT_ARCHITECTURE.md) | Prompt file responsibilities |
 | [API Specification](docs/API_SPECIFICATION.md) | Planned HTTP endpoints |
 | [Processing States](docs/PROCESSING_STATES.md) | Real progress and retries |

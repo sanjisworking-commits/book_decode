@@ -95,6 +95,23 @@ async def book_chapters(
         raise AppError(404, "book_not_found", f"Book not found: {book_id}") from exc
 
 
+@router.get("/{book_id}/canonical")
+async def book_canonical(
+    book_id: str,
+    service: BookService = Depends(get_book_service),
+) -> dict:
+    try:
+        return service.get_canonical_book(book_id)
+    except KeyError as exc:
+        raise AppError(404, "book_not_found", f"Book not found: {book_id}") from exc
+    except FileNotFoundError as exc:
+        raise AppError(
+            404,
+            "canonical_book_not_found",
+            f"Canonical book.json not ready: {book_id}",
+        ) from exc
+
+
 @router.get("/{book_id}/chapters/{chapter_id}/source")
 async def chapter_source(
     book_id: str,

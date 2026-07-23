@@ -67,11 +67,18 @@ def test_upload_and_process_normalises_and_chunks(
     source = client.get(f"/books/{book_id}/chapters/{chapter_id}/source")
     assert source.status_code == 200, source.text
     source_body = source.json()
-    assert source_body["schema_version"] == "1.0"
+    assert source_body["schema_version"] == "2.0"
     assert source_body["source_blocks"]
     block_ids = [b["block_id"] for b in source_body["source_blocks"]]
     assert len(block_ids) == len(set(block_ids))
     assert all(chapter_id in bid for bid in block_ids)
+
+    canonical = client.get(f"/books/{book_id}/canonical")
+    assert canonical.status_code == 200, canonical.text
+    canonical_body = canonical.json()
+    assert canonical_body["schema_version"] == "2.0"
+    assert canonical_body["book_id"] == book_id
+    assert canonical_body["chapters"]
 
     chunks = client.get(f"/books/{book_id}/chapters/{chapter_id}/chunks")
     assert chunks.status_code == 200, chunks.text

@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://accordingtologic.local/schemas/canonical_book.schema.json",
+  "title": "CanonicalBook",
+  "description": "Lossless hierarchical book representation after Docling normalisation (schema 2.0).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "book_id",
+    "title",
+    "chapters",
+    "front_matter"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "2.0" },
+    "book_id": { "type": "string", "minLength": 1 },
+    "title": { "type": "string" },
+    "author": { "type": ["string", "null"] },
+    "language": { "type": ["string", "null"] },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "converter": { "type": "string" },
+        "docling_schema_name": { "type": ["string", "null"] },
+        "docling_version": { "type": ["string", "null"] }
+      }
+    },
+    "front_matter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["blocks"],
+      "properties": {
+        "blocks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/block" }
+        }
+      }
+    },
+    "parts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/part" }
+    },
+    "chapters": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/chapter" }
+    }
+  },
+  "$defs": {
+    "part": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["part_id", "title", "order_index", "chapters"],
+      "properties": {
+        "part_id": { "type": "string" },
+        "title": { "type": "string" },
+        "order_index": { "type": "integer", "minimum": 0 },
+        "source_ref": { "type": ["string", "null"] },
+        "chapters": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/chapter" }
+        }
+      }
+    },
+    "chapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "chapter_id",
+        "title",
+        "order_index",
+        "sections",
+        "blocks"
+      ],
+      "properties": {
+        "chapter_id": { "type": "string" },
+        "title": { "type": "string" },
+        "chapter_number": { "type": ["integer", "null"] },
+        "part_id": { "type": ["string", "null"] },
+        "order_index": { "type": "integer", "minimum": 0 },
+        "source_ref": { "type": ["string", "null"] },
+        "heading_path": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "sections": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/section" }
+        },
+        "blocks": {
+          "type": "array",
+          "description": "Chapter reading-order flat list (same block objects as in sections).",
+          "items": { "$ref": "#/$defs/block" }
+        }
+      }
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["section_id", "order_index", "blocks"],
+      "properties": {
+        "section_id": { "type": "string" },
+        "title": { "type": ["string", "null"] },
+        "heading_level": { "type": ["integer", "null"] },
+        "heading_path": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "order_index": { "type": "integer", "minimum": 0 },
+        "source_ref": { "type": ["string", "null"] },
+        "blocks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/block" }
+        }
+      }
+    },
+    "block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "block_id",
+        "block_type",
+        "text",
+        "book_id",
+        "order_index",
+        "book_order_index",
+        "heading_path",
+        "metadata"
+      ],
+      "properties": {
+        "block_id": { "type": "string", "minLength": 1 },
+        "block_type": {
+          "type": "string",
+          "enum": [
+            "heading",
+            "paragraph",
+            "quote",
+            "table",
+            "list",
+            "list_item",
+            "note",
+            "image",
+            "figure",
+            "diagram",
+            "equation",
+            "code",
+            "sidebar",
+            "callout",
+            "exercise",
+            "summary",
+            "warning",
+            "example",
+            "other"
+          ]
+        },
+        "text": { "type": "string" },
+        "book_id": { "type": "string" },
+        "chapter_id": { "type": ["string", "null"] },
+        "section_id": { "type": ["string", "null"] },
+        "part_id": { "type": ["string", "null"] },
+        "heading_path": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "source_ref": { "type": ["string", "null"] },
+        "docling_index": { "type": ["integer", "null"] },
+        "order_index": { "type": "integer", "minimum": 0 },
+        "book_order_index": { "type": "integer", "minimum": 0 },
+        "metadata": { "type": "object" }
+      }
+    }
+  }
+}
