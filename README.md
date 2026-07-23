@@ -10,10 +10,9 @@ This is **not** an ebook reader, general summariser, chatbot, or bookstore.
 
 ## Current phase
 
-**Phase 0 — Planning and repository setup**
+**Phase 1 — EPUB ingestion (in progress on feature branches)**
 
-Documentation, architecture, JSON Schemas, prompt stubs, and empty app scaffolds are in place.  
-**No application runtime, LLM calls, or EPUB processing in this phase.**
+Phase 0 planning is on `main`. Backend Phase 1 implements upload, Docling conversion, chapter detection, and status APIs. See [`backend/README.md`](backend/README.md).
 
 Argument Spine content is generated later by the AI pipeline from user-uploaded EPUBs.  
 **Do not hardcode chapter claims, assumptions, or counters in the frontend.**
