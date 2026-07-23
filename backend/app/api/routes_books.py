@@ -1,4 +1,4 @@
-"""Book API routes — Phase 1 surface."""
+"""Book API routes — Phase 1–2 surface."""
 
 from __future__ import annotations
 
@@ -93,6 +93,42 @@ async def book_chapters(
         return service.list_chapters(book_id)
     except KeyError as exc:
         raise AppError(404, "book_not_found", f"Book not found: {book_id}") from exc
+
+
+@router.get("/{book_id}/chapters/{chapter_id}/source")
+async def chapter_source(
+    book_id: str,
+    chapter_id: str,
+    service: BookService = Depends(get_book_service),
+) -> dict:
+    try:
+        return service.get_chapter_source(book_id, chapter_id)
+    except KeyError as exc:
+        raise AppError(404, "book_not_found", f"Book not found: {book_id}") from exc
+    except FileNotFoundError as exc:
+        raise AppError(
+            404,
+            "chapter_source_not_found",
+            f"Source chapter not ready: {chapter_id}",
+        ) from exc
+
+
+@router.get("/{book_id}/chapters/{chapter_id}/chunks")
+async def chapter_chunks(
+    book_id: str,
+    chapter_id: str,
+    service: BookService = Depends(get_book_service),
+) -> dict:
+    try:
+        return service.get_chapter_chunks(book_id, chapter_id)
+    except KeyError as exc:
+        raise AppError(404, "book_not_found", f"Book not found: {book_id}") from exc
+    except FileNotFoundError as exc:
+        raise AppError(
+            404,
+            "chapter_chunks_not_found",
+            f"Chunk plan not ready: {chapter_id}",
+        ) from exc
 
 
 @router.delete("/{book_id}", status_code=204)

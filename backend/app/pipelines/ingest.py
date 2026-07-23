@@ -1,15 +1,17 @@
-"""Phase 1 ingestion pipeline: Docling convert + chapter detection."""
+"""Ingestion pipeline: Phase 1 (Docling + chapters) + Phase 2 (normalise + chunk)."""
 
 from __future__ import annotations
 
 import logging
 import uuid
-from pathlib import Path
 from typing import Any
 
-from app.domain.enums import BookProcessingStatus, UIStage
+from app.config import get_settings
+from app.domain.enums import BookProcessingStatus, ChapterStatus, UIStage
 from app.pipelines.chapter_detect import detect_chapters_from_docling
+from app.pipelines.chunk import chunk_source_chapter, validate_chunk_allow_lists
 from app.pipelines.docling_convert import convert_epub_with_docling
+from app.pipelines.normalise import assert_unique_block_ids, normalise_chapter_from_docling
 from app.storage.filesystem import FilesystemStore
 from app.storage.sqlite_store import SqliteStore
 from app.utils.ids import utc_now_iso
@@ -30,8 +32,10 @@ class IngestPipeline:
 
         job_id = book.get("job_id") or f"job-{uuid.uuid4().hex[:10]}"
         epub_path = self.fs.epub_path(book_id, book["epub_filename"])
+        settings = get_settings()
 
         try:
+            # --- Phase 1: structure + chapter detection ---
             self._set_status(
                 book_id,
                 BookProcessingStatus.READING_STRUCTURE,
@@ -53,19 +57,92 @@ class IngestPipeline:
 
             self.fs.write_json(self.fs.chapters_preview_path(book_id), {"chapters": chapters})
             self.db.replace_chapters(book_id, chapters)
+            self.db.update_book(book_id, chapter_count=len(chapters))
 
-            # Phase 1 stops after chapter detection. Later phases continue the pipeline.
+            # --- Phase 2: normalisation + chunking ---
+            self._set_status(
+                book_id,
+                BookProcessingStatus.PREPARING_BLOCKS,
+                UIStage.PREPARING_CHAPTER_BLOCKS,
+                job_id=job_id,
+            )
+
+            normalised_summaries: list[dict[str, Any]] = []
+            updated_chapters: list[dict[str, Any]] = []
+
+            for ch in chapters:
+                chapter_id = ch["chapter_id"]
+                self.db.update_book(book_id, current_chapter_id=chapter_id)
+
+                source = normalise_chapter_from_docling(
+                    book_id=book_id, chapter=ch, docling_json=docling_json
+                )
+                if not source.get("source_blocks"):
+                    # Empty / malformed chapter — mark failed, continue others
+                    failed = {
+                        **ch,
+                        "status": ChapterStatus.FAILED.value,
+                        "error": {
+                            "code": "empty_chapter",
+                            "message": "No source blocks after normalisation.",
+                            "details": None,
+                        },
+                    }
+                    updated_chapters.append(failed)
+                    continue
+
+                assert_unique_block_ids(source)
+                chunk_plan = chunk_source_chapter(
+                    source,
+                    token_limit=settings.chunk_token_limit,
+                    overlap_blocks=settings.chunk_overlap_blocks,
+                )
+                validate_chunk_allow_lists(source, chunk_plan)
+
+                self.fs.write_json(self.fs.chapter_source_path(book_id, chapter_id), source)
+                self.fs.write_json(self.fs.chapter_chunks_path(book_id, chapter_id), chunk_plan)
+
+                updated_chapters.append(
+                    {
+                        **ch,
+                        "status": ChapterStatus.PENDING.value,
+                        "error": None,
+                        "preview": {
+                            **(ch.get("preview") or {}),
+                            "block_count": len(source["source_blocks"]),
+                            "chunk_count": len(chunk_plan.get("chunks") or []),
+                            "chunk_strategy": chunk_plan.get("strategy"),
+                        },
+                    }
+                )
+                normalised_summaries.append(
+                    {
+                        "chapter_id": chapter_id,
+                        "block_count": len(source["source_blocks"]),
+                        "chunk_count": len(chunk_plan.get("chunks") or []),
+                        "strategy": chunk_plan.get("strategy"),
+                    }
+                )
+
+            self.db.replace_chapters(book_id, updated_chapters)
+            failed_count = sum(
+                1 for c in updated_chapters if c["status"] == ChapterStatus.FAILED.value
+            )
+            ready_count = len(updated_chapters) - failed_count
+            if ready_count == 0:
+                raise RuntimeError("Normalisation produced no usable chapters.")
+
             metadata = {
                 "schema_version": "1.0",
                 "book_id": book_id,
                 "title": book["title"],
                 "author": book.get("author"),
                 "epub_filename": book["epub_filename"],
-                "processing_status": BookProcessingStatus.DETECTING_CHAPTERS.value,
+                "processing_status": BookProcessingStatus.PREPARING_BLOCKS.value,
                 "language": book.get("language"),
-                "chapter_count": len(chapters),
+                "chapter_count": len(updated_chapters),
                 "processed_chapter_count": 0,
-                "failed_chapter_count": 0,
+                "failed_chapter_count": failed_count,
                 "upload_timestamp": book["upload_timestamp"],
                 "completion_timestamp": None,
                 "error": None,
@@ -73,32 +150,34 @@ class IngestPipeline:
                     "docling_path": str(self.fs.docling_json_path(book_id)),
                     "chapters_preview_path": str(self.fs.chapters_preview_path(book_id)),
                     "converter": "docling",
-                    "note": "Phase 1 complete: structure read and chapters detected. "
-                    "Argument Spine generation begins in later phases.",
+                },
+                "phase2": {
+                    "note": "Phase 2 complete: stable source-block IDs and chunk plans ready. "
+                    "AI Argument Spine extraction begins in Phase 3.",
+                    "chapters": normalised_summaries,
                 },
             }
-            # Mark a distinct Phase-1 success status: chapters detected, awaiting later phases.
-            # Use detecting_chapters as terminal Phase-1 state with chapter_count set;
-            # expose via status API as stage detecting_chapters with chapters listed.
             self.db.update_book(
                 book_id,
-                processing_status=BookProcessingStatus.DETECTING_CHAPTERS.value,
-                current_stage=UIStage.DETECTING_CHAPTERS.value,
-                chapter_count=len(chapters),
+                processing_status=BookProcessingStatus.PREPARING_BLOCKS.value,
+                current_stage=UIStage.PREPARING_CHAPTER_BLOCKS.value,
+                chapter_count=len(updated_chapters),
                 processed_chapter_count=0,
-                failed_chapter_count=0,
+                failed_chapter_count=failed_count,
                 current_chapter_id=None,
                 job_id=job_id,
                 converter="docling",
                 error=None,
             )
-            metadata["processing_status"] = BookProcessingStatus.DETECTING_CHAPTERS.value
             self.fs.write_json(self.fs.metadata_path(book_id), metadata)
             logger.info(
-                "Phase 1 ingest complete book_id=%s chapters=%s", book_id, len(chapters)
+                "Phase 2 complete book_id=%s chapters=%s failed=%s",
+                book_id,
+                ready_count,
+                failed_count,
             )
         except Exception as exc:
-            logger.exception("Phase 1 ingest failed book_id=%s", book_id)
+            logger.exception("Ingest failed book_id=%s", book_id)
             error = {"code": "ingest_failed", "message": str(exc), "details": None}
             self.db.update_book(
                 book_id,

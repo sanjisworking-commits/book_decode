@@ -41,6 +41,17 @@ class FilesystemStore:
     def metadata_path(self, book_id: str) -> Path:
         return self.book_dir(book_id) / "metadata.json"
 
+    def chapters_dir(self, book_id: str) -> Path:
+        path = self.book_dir(book_id) / "chapters"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def chapter_source_path(self, book_id: str, chapter_id: str) -> Path:
+        return self.chapters_dir(book_id) / f"{chapter_id}.source.json"
+
+    def chapter_chunks_path(self, book_id: str, chapter_id: str) -> Path:
+        return self.chapters_dir(book_id) / f"{chapter_id}.chunks.json"
+
     def write_json(self, path: Path, payload: Any) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -1,4 +1,4 @@
-"""API integration tests for upload / process / status (Phase 1)."""
+"""API integration tests for Phase 1–2 upload → normalise → chunks."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 def test_health(client: TestClient) -> None:
     res = client.get("/health")
     assert res.status_code == 200
-    assert res.json()["phase"] == "1"
+    assert res.json()["phase"] == "2"
 
 
 def test_upload_rejects_bad_extension(client: TestClient, mini_epub_bytes: bytes) -> None:
@@ -23,7 +23,9 @@ def test_upload_rejects_bad_extension(client: TestClient, mini_epub_bytes: bytes
     assert body["error"]["code"] == "invalid_extension"
 
 
-def test_upload_and_process_detects_chapters(client: TestClient, mini_epub_bytes: bytes) -> None:
+def test_upload_and_process_normalises_and_chunks(
+    client: TestClient, mini_epub_bytes: bytes
+) -> None:
     upload = client.post(
         "/books/upload",
         files={"file": ("mini.epub", mini_epub_bytes, "application/epub+zip")},
@@ -32,12 +34,10 @@ def test_upload_and_process_detects_chapters(client: TestClient, mini_epub_bytes
     meta = upload.json()
     book_id = meta["book_id"]
     assert meta["processing_status"] == "uploaded"
-    assert meta["title"]
 
     process = client.post(f"/books/{book_id}/process")
     assert process.status_code == 202, process.text
 
-    # Poll until Phase 1 finishes (chapters detected or failed)
     deadline = time.time() + 120
     status = None
     while time.time() < deadline:
@@ -46,25 +46,40 @@ def test_upload_and_process_detects_chapters(client: TestClient, mini_epub_bytes
         status = status_res.json()
         if status["processing_status"] == "failed":
             break
-        if status["chapter_count"] > 0 and status["processing_status"] == "detecting_chapters":
-            # Idle-complete Phase 1
-            if status.get("chapters"):
-                break
+        if (
+            status["chapter_count"] > 0
+            and status["processing_status"] == "preparing_blocks"
+            and status.get("chapters")
+        ):
+            break
         time.sleep(0.5)
 
     assert status is not None
     assert status["processing_status"] != "failed", status
+    assert status["processing_status"] == "preparing_blocks"
+    assert status["current_stage"] == "preparing_chapter_blocks"
     assert status["chapter_count"] >= 1
-    assert len(status["chapters"]) >= 1
-    assert status["current_stage"] == "detecting_chapters"
 
     chapters = client.get(f"/books/{book_id}/chapters")
     assert chapters.status_code == 200
-    assert len(chapters.json()["chapters"]) >= 1
+    chapter_id = chapters.json()["chapters"][0]["chapter_id"]
 
-    got = client.get(f"/books/{book_id}")
-    assert got.status_code == 200
-    assert got.json()["book_id"] == book_id
+    source = client.get(f"/books/{book_id}/chapters/{chapter_id}/source")
+    assert source.status_code == 200, source.text
+    source_body = source.json()
+    assert source_body["schema_version"] == "1.0"
+    assert source_body["source_blocks"]
+    block_ids = [b["block_id"] for b in source_body["source_blocks"]]
+    assert len(block_ids) == len(set(block_ids))
+    assert all(chapter_id in bid for bid in block_ids)
+
+    chunks = client.get(f"/books/{book_id}/chapters/{chapter_id}/chunks")
+    assert chunks.status_code == 200, chunks.text
+    chunk_body = chunks.json()
+    assert chunk_body["chunks"]
+    allowed = set(block_ids)
+    for chunk in chunk_body["chunks"]:
+        assert set(chunk["block_ids"]).issubset(allowed)
 
 
 def test_process_unknown_book(client: TestClient) -> None:

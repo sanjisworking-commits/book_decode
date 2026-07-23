@@ -1,8 +1,10 @@
-# Phase 1 backend
+# Backend
 
-## Scope
+## Current phase
 
-EPUB upload, validation, Docling conversion, chapter detection, and status APIs.
+**Phase 2 — Normalisation and chunking**
+
+Builds on Phase 1 (upload + Docling + chapter detection) by assigning stable source-block IDs, writing per-chapter `*.source.json`, and producing structure-first chunk plans.
 
 Argument Spine generation is **not** included (Phases 3–5).
 
@@ -14,7 +16,6 @@ From the repository root:
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r backend/requirements.txt
-pip install 'docling>=2.0.0'   # required for real EPUB conversion
 cp .env.example .env
 ```
 
@@ -26,17 +27,19 @@ cd backend
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Health check: `GET http://localhost:8000/health`
+Health check: `GET http://localhost:8000/health` → `{"phase":"2"}`
 
-## Phase 1 endpoints
+## Endpoints
 
 | Method | Path | Purpose |
 |--------|------|---------|
 | POST | `/books/upload` | Upload EPUB |
-| POST | `/books/{id}/process` | Start Phase 1 ingest (background) |
+| POST | `/books/{id}/process` | Start Phase 1–2 ingest (background) |
 | GET | `/books/{id}/status` | Real processing status |
 | GET | `/books/{id}` | Book metadata |
 | GET | `/books/{id}/chapters` | Detected chapter list |
+| GET | `/books/{id}/chapters/{cid}/source` | Normalised source chapter JSON |
+| GET | `/books/{id}/chapters/{cid}/chunks` | Chunk plan for extraction |
 | DELETE | `/books/{id}` | Delete book artefacts |
 | POST | `/demo/reset` | Clear local demo data |
 
@@ -48,16 +51,17 @@ cd backend
 pytest -q
 ```
 
-The API integration test runs Docling on a tiny synthetic EPUB and may take up to ~2 minutes on first model/cache warm-up.
-
-## Phase 1 success state
+## Phase 2 success state
 
 After a successful process job:
 
-- `processing_status` = `detecting_chapters`
+- `processing_status` = `preparing_blocks`
+- `current_stage` = `preparing_chapter_blocks`
 - `chapter_count` > 0
-- `chapters` listed as `pending`
-- Docling JSON at `data/processed/{book_id}/docling.json`
-- Chapter preview at `data/processed/{book_id}/chapters_preview.json`
+- Per chapter:
+  - `data/books/{book_id}/chapters/{chapter_id}.source.json`
+  - `data/books/{book_id}/chapters/{chapter_id}.chunks.json`
 
-Later phases continue from this point (normalisation, AI spine, etc.).
+Block ID format: `{book_id}.{chapter_id}.{section_id}.blockNNN`
+
+Phase 3 will consume chunk allow-lists for Argument Spine extraction.

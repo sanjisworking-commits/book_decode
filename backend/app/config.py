@@ -30,6 +30,10 @@ class Settings(BaseSettings):
 
     max_epub_size_mb: int = 50
 
+    # Phase 2 chunking
+    chunk_token_limit: int = 6000
+    chunk_overlap_blocks: int = 2
+
     def ensure_directories(self) -> None:
         for path in (
             self.data_dir,
