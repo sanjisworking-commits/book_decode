@@ -1,4 +1,4 @@
-"""API integration tests for Phase 1–2 upload → normalise → chunks."""
+"""API integration tests for Phase 1–3 (mock LLM)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 def test_health(client: TestClient) -> None:
     res = client.get("/health")
     assert res.status_code == 200
-    assert res.json()["phase"] == "2"
+    assert res.json()["phase"] == "3"
 
 
 def test_upload_rejects_bad_extension(client: TestClient, mini_epub_bytes: bytes) -> None:
@@ -23,7 +23,7 @@ def test_upload_rejects_bad_extension(client: TestClient, mini_epub_bytes: bytes
     assert body["error"]["code"] == "invalid_extension"
 
 
-def test_upload_and_process_normalises_and_chunks(
+def test_upload_and_process_extracts_spine_candidate(
     client: TestClient, mini_epub_bytes: bytes
 ) -> None:
     upload = client.post(
@@ -31,9 +31,7 @@ def test_upload_and_process_normalises_and_chunks(
         files={"file": ("mini.epub", mini_epub_bytes, "application/epub+zip")},
     )
     assert upload.status_code == 201, upload.text
-    meta = upload.json()
-    book_id = meta["book_id"]
-    assert meta["processing_status"] == "uploaded"
+    book_id = upload.json()["book_id"]
 
     process = client.post(f"/books/{book_id}/process")
     assert process.status_code == 202, process.text
@@ -48,7 +46,7 @@ def test_upload_and_process_normalises_and_chunks(
             break
         if (
             status["chapter_count"] > 0
-            and status["processing_status"] == "preparing_blocks"
+            and status["processing_status"] == "analysing_chapters"
             and status.get("chapters")
         ):
             break
@@ -56,8 +54,8 @@ def test_upload_and_process_normalises_and_chunks(
 
     assert status is not None
     assert status["processing_status"] != "failed", status
-    assert status["processing_status"] == "preparing_blocks"
-    assert status["current_stage"] == "preparing_chapter_blocks"
+    assert status["processing_status"] == "analysing_chapters"
+    assert status["current_stage"] == "analysing_chapters"
     assert status["chapter_count"] >= 1
 
     chapters = client.get(f"/books/{book_id}/chapters")
@@ -88,6 +86,16 @@ def test_upload_and_process_normalises_and_chunks(
     for chunk in chunk_body["chunks"]:
         assert set(chunk["block_ids"]).issubset(allowed)
 
+    spine = client.get(f"/books/{book_id}/chapters/{chapter_id}/spine")
+    assert spine.status_code == 200, spine.text
+    body = spine.json()
+    assert body["book_id"] == book_id
+    assert body["chapter_id"] == chapter_id
+    assert body["language_modes"] == ["en"]
+    assert body.get("nodes")
+    assert all(n.get("statement_hinglish") is None for n in body["nodes"])
+    for node in body["nodes"]:
+        assert set(node.get("source_block_ids") or []).issubset(allowed)
 
 def test_process_unknown_book(client: TestClient) -> None:
     res = client.post("/books/missing-book/process")
