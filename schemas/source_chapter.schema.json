@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://accordingtologic.local/schemas/source_chapter.schema.json",
+  "title": "SourceChapter",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "book_id",
+    "chapter_id",
+    "chapter_number",
+    "chapter_title",
+    "heading_hierarchy",
+    "source_blocks"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "book_id": { "type": "string", "minLength": 1 },
+    "chapter_id": { "type": "string", "minLength": 1 },
+    "chapter_number": { "type": ["integer", "null"], "minimum": 1 },
+    "chapter_title": { "type": "string" },
+    "heading_hierarchy": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "source_blocks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/sourceBlock" }
+    }
+  },
+  "$defs": {
+    "sourceBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["block_id", "block_type", "text", "order_index"],
+      "properties": {
+        "block_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable ID: book_id.chapter_id.section_id.block_id"
+        },
+        "section_id": { "type": ["string", "null"] },
+        "block_type": {
+          "type": "string",
+          "enum": [
+            "paragraph",
+            "heading",
+            "list_item",
+            "table",
+            "quote",
+            "note",
+            "other"
+          ]
+        },
+        "text": { "type": "string" },
+        "order_index": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

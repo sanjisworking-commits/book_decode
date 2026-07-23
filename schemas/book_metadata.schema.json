@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://accordingtologic.local/schemas/book_metadata.schema.json",
+  "title": "BookMetadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "book_id",
+    "title",
+    "epub_filename",
+    "processing_status",
+    "chapter_count",
+    "processed_chapter_count",
+    "upload_timestamp"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "book_id": { "type": "string", "minLength": 1 },
+    "title": { "type": "string" },
+    "author": { "type": ["string", "null"] },
+    "epub_filename": { "type": "string" },
+    "processing_status": {
+      "type": "string",
+      "enum": [
+        "uploaded",
+        "queued",
+        "uploading",
+        "reading_structure",
+        "detecting_chapters",
+        "preparing_blocks",
+        "analysing_chapters",
+        "constructing_spines",
+        "creating_hinglish",
+        "validating",
+        "saving",
+        "completed",
+        "completed_with_errors",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "language": { "type": ["string", "null"] },
+    "chapter_count": { "type": "integer", "minimum": 0 },
+    "processed_chapter_count": { "type": "integer", "minimum": 0 },
+    "failed_chapter_count": { "type": "integer", "minimum": 0 },
+    "upload_timestamp": { "type": "string", "format": "date-time" },
+    "completion_timestamp": { "type": ["string", "null"], "format": "date-time" },
+    "error": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "details": { "type": ["object", "null"] }
+      }
+    }
+  }
+}

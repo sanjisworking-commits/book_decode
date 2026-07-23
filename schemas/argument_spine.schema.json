@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://accordingtologic.local/schemas/argument_spine.schema.json",
+  "title": "ArgumentSpine",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "book_id",
+    "chapter_id",
+    "language_modes",
+    "nodes"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "book_id": { "type": "string", "minLength": 1 },
+    "chapter_id": { "type": "string", "minLength": 1 },
+    "language_modes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "enum": ["en", "hinglish"] }
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/spineNode" }
+    },
+    "confidence_summary": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "overall": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+    "processing": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "model": { "type": ["string", "null"] },
+        "prompt_versions": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "created_at": { "type": ["string", "null"], "format": "date-time" },
+        "updated_at": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "validation": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_valid": { "type": "boolean" },
+        "source_refs_valid": { "type": "boolean" },
+        "bilingual_aligned": { "type": "boolean" },
+        "checked_at": { "type": ["string", "null"], "format": "date-time" }
+      }
+    }
+  },
+  "$defs": {
+    "spineNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "node_type",
+        "statement_en",
+        "source_status",
+        "source_block_ids",
+        "order"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "node_type": {
+          "type": "string",
+          "enum": [
+            "chapter_question",
+            "central_claim",
+            "reasoning_steps",
+            "evidence_and_examples",
+            "hidden_assumptions",
+            "tensions_or_gaps",
+            "strongest_counter_position",
+            "consequence_if_correct",
+            "role_in_book",
+            "one_sentence_decode",
+            "confidence_and_unresolved",
+            "source_block_references"
+          ]
+        },
+        "statement_en": { "type": ["string", "null"] },
+        "explanation_en": { "type": ["string", "null"] },
+        "statement_hinglish": { "type": ["string", "null"] },
+        "explanation_hinglish": { "type": ["string", "null"] },
+        "source_status": {
+          "type": "string",
+          "enum": [
+            "explicit_author",
+            "author_paraphrase",
+            "ai_inference",
+            "external_counter"
+          ]
+        },
+        "source_block_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "order": { "type": "integer", "minimum": 0 },
+        "prev_id": { "type": ["string", "null"] },
+        "next_id": { "type": ["string", "null"] },
+        "warnings": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

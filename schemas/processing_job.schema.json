@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://accordingtologic.local/schemas/processing_job.schema.json",
+  "title": "ProcessingJob",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "book_id",
+    "processing_status",
+    "current_stage",
+    "stage_index",
+    "stages_total",
+    "chapter_count",
+    "processed_chapter_count",
+    "failed_chapter_count",
+    "partial_success",
+    "chapters"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "book_id": { "type": "string", "minLength": 1 },
+    "job_id": { "type": ["string", "null"] },
+    "processing_status": { "type": "string" },
+    "current_stage": {
+      "type": "string",
+      "enum": [
+        "uploading_epub",
+        "reading_book_structure",
+        "detecting_chapters",
+        "preparing_chapter_blocks",
+        "analysing_chapters",
+        "constructing_argument_spines",
+        "creating_hindi_english_versions",
+        "validating_output",
+        "saving_decoded_book",
+        "book_ready"
+      ]
+    },
+    "stage_index": { "type": "integer", "minimum": 1, "maximum": 10 },
+    "stages_total": { "type": "integer", "const": 10 },
+    "chapter_count": { "type": "integer", "minimum": 0 },
+    "processed_chapter_count": { "type": "integer", "minimum": 0 },
+    "failed_chapter_count": { "type": "integer", "minimum": 0 },
+    "current_chapter_id": { "type": ["string", "null"] },
+    "partial_success": { "type": "boolean" },
+    "error": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "details": { "type": ["object", "null"] }
+      }
+    },
+    "chapters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["chapter_id", "status", "retry_count"],
+        "properties": {
+          "chapter_id": { "type": "string" },
+          "title": { "type": ["string", "null"] },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "chunking",
+              "extracting",
+              "synthesising",
+              "adapting_hinglish",
+              "validating",
+              "retrying",
+              "completed",
+              "failed"
+            ]
+          },
+          "retry_count": { "type": "integer", "minimum": 0 },
+          "error": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["code", "message"],
+            "properties": {
+              "code": { "type": "string" },
+              "message": { "type": "string" },
+              "details": { "type": ["object", "null"] }
+            }
+          }
+        }
+      }
+    },
+    "updated_at": { "type": ["string", "null"], "format": "date-time" }
+  }
+}
