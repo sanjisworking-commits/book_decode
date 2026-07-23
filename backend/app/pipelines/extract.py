@@ -14,7 +14,7 @@ from app.pipelines.validate_spine import (
     validate_spine_schema,
 )
 from app.prompts.loader import load_prompt
-from app.services.llm import LLMError, get_llm_client
+from app.services.llm import LLMError, get_llm_client, resolve_llm_settings
 from app.storage.filesystem import FilesystemStore
 from app.storage.sqlite_store import SqliteStore
 from app.utils.ids import utc_now_iso
@@ -26,8 +26,9 @@ class ExtractPipeline:
     def __init__(self, db: SqliteStore, fs: FilesystemStore, settings: Settings | None = None) -> None:
         self.db = db
         self.fs = fs
-        self.settings = settings or get_settings()
-        self.llm = get_llm_client(self.settings)
+        raw = settings or get_settings()
+        self.settings = resolve_llm_settings(raw) if not raw.llm_mock else raw
+        self.llm = get_llm_client(raw)
 
     def run(self, book_id: str) -> None:
         book = self.db.get_book(book_id)
@@ -226,6 +227,8 @@ class ExtractPipeline:
                     "Phase 4 synthesises multi-chunk chapters.",
                     "prompt": "argument_spine_extraction.md",
                     "llm_mock": self.settings.llm_mock,
+                    "llm_provider": self.settings.llm_provider,
+                    "llm_model": self.settings.llm_model if not self.settings.llm_mock else "mock",
                     "chapters": extract_summaries,
                 },
             }

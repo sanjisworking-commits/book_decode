@@ -34,7 +34,8 @@ class Settings(BaseSettings):
     chunk_token_limit: int = 6000
     chunk_overlap_blocks: int = 2
 
-    # LLM (OpenAI-compatible)
+    # LLM (multi-provider)
+    llm_provider: str = "openai"  # openai | anthropic | openai_compatible
     llm_api_base: str = "https://api.openai.com/v1"
     llm_api_key: str = ""
     llm_model: str = "gpt-4o"

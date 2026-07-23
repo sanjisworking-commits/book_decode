@@ -24,13 +24,42 @@ For offline / CI tests without an API key:
 LLM_MOCK=true
 ```
 
-For real extraction:
+## LLM providers
+
+Set `LLM_PROVIDER` to one of: `openai`, `anthropic`, `openai_compatible`.
+
+### OpenAI
 
 ```bash
 LLM_MOCK=false
-LLM_API_KEY=...
+LLM_PROVIDER=openai
 LLM_API_BASE=https://api.openai.com/v1
+LLM_API_KEY=sk-...
 LLM_MODEL=gpt-4o
+```
+
+### Anthropic Claude
+
+```bash
+LLM_MOCK=false
+LLM_PROVIDER=anthropic
+LLM_API_BASE=https://api.anthropic.com
+LLM_API_KEY=sk-ant-...
+LLM_MODEL=claude-sonnet-4-20250514
+```
+
+If `LLM_API_BASE` / `LLM_MODEL` are left at OpenAI defaults while `LLM_PROVIDER=anthropic`, the client applies Anthropic defaults automatically.
+
+### Any OpenAI-compatible gateway
+
+Same Chat Completions wire protocol (Groq, Together, Azure OpenAI-compat, Ollama, etc.):
+
+```bash
+LLM_MOCK=false
+LLM_PROVIDER=openai_compatible
+LLM_API_BASE=https://api.groq.com/openai/v1
+LLM_API_KEY=...
+LLM_MODEL=llama-3.3-70b-versatile
 ```
 
 ## Run API
