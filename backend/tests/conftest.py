@@ -60,6 +60,7 @@ def settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
     monkeypatch.setenv("LOG_DIR", str(data / "logs"))
     monkeypatch.setenv("SQLITE_PATH", str(data / "test.db"))
     monkeypatch.setenv("MAX_EPUB_SIZE_MB", "5")
+    monkeypatch.setenv("LLM_MOCK", "true")
     get_settings.cache_clear()
     s = get_settings()
     s.ensure_directories()

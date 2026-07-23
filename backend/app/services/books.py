@@ -11,6 +11,7 @@ from app.domain.enums import (
     BookProcessingStatus,
     UIStage,
 )
+from app.pipelines.extract import ExtractPipeline
 from app.pipelines.ingest import IngestPipeline
 from app.schemas.api_models import (
     BookMetadata,
@@ -37,12 +38,19 @@ _ACTIVE_STATUSES = {
     BookProcessingStatus.SAVING.value,
 }
 
+_IDLE_COMPLETE_STATUSES = {
+    BookProcessingStatus.DETECTING_CHAPTERS.value,
+    BookProcessingStatus.PREPARING_BLOCKS.value,
+    BookProcessingStatus.ANALYSING_CHAPTERS.value,
+}
+
 
 class BookService:
     def __init__(self, db: SqliteStore, fs: FilesystemStore) -> None:
         self.db = db
         self.fs = fs
         self.ingest = IngestPipeline(db, fs)
+        self.extract = ExtractPipeline(db, fs)
 
     def upload_epub(self, *, filename: str, data: bytes, max_size_bytes: int) -> BookMetadata:
         result = validate_epub_bytes(data, filename=filename, max_size_bytes=max_size_bytes)
@@ -86,10 +94,7 @@ class BookService:
         if not book:
             raise KeyError(book_id)
         status = book["processing_status"]
-        phase_idle_complete = (book.get("chapter_count") or 0) > 0 and status in {
-            BookProcessingStatus.DETECTING_CHAPTERS.value,
-            BookProcessingStatus.PREPARING_BLOCKS.value,
-        }
+        phase_idle_complete = (book.get("chapter_count") or 0) > 0 and status in _IDLE_COMPLETE_STATUSES
         if status in _ACTIVE_STATUSES and not phase_idle_complete:
             raise RuntimeError("already_processing")
 
@@ -108,8 +113,16 @@ class BookService:
         return self.get_status(book_id)
 
     def run_ingest_sync(self, book_id: str) -> None:
-        """Run Phase 1–2 ingest (called from background task or tests)."""
+        """Run Phase 1–3 pipeline (ingest → normalise/chunk → extract)."""
         self.ingest.run(book_id)
+        book = self.db.get_book(book_id)
+        if not book:
+            return
+        if book["processing_status"] == BookProcessingStatus.FAILED.value:
+            return
+        # Continue into Phase 3 when Phase 2 left book in preparing_blocks
+        if book["processing_status"] == BookProcessingStatus.PREPARING_BLOCKS.value:
+            self.extract.run(book_id)
 
     def get_chapter_source(self, book_id: str, chapter_id: str) -> dict[str, Any]:
         book = self.db.get_book(book_id)
@@ -125,6 +138,15 @@ class BookService:
         if not book:
             raise KeyError(book_id)
         path = self.fs.chapter_chunks_path(book_id, chapter_id)
+        if not path.exists():
+            raise FileNotFoundError(chapter_id)
+        return self.fs.read_json(path)
+
+    def get_chapter_spine_candidate(self, book_id: str, chapter_id: str) -> dict[str, Any]:
+        book = self.db.get_book(book_id)
+        if not book:
+            raise KeyError(book_id)
+        path = self.fs.chapter_spine_candidate_path(book_id, chapter_id)
         if not path.exists():
             raise FileNotFoundError(chapter_id)
         return self.fs.read_json(path)

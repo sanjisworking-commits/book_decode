@@ -2,21 +2,35 @@
 
 ## Current phase
 
-**Phase 2 — Normalisation and chunking**
+**Phase 3 — AI Argument Spine extraction**
 
-Builds on Phase 1 (upload + Docling + chapter detection) by assigning stable source-block IDs, writing per-chapter `*.source.json`, and producing structure-first chunk plans.
+Pipeline runs Phase 1 (Docling + chapters) → Phase 2 (normalise + chunks) → Phase 3 (English spine extraction per chunk).
 
-Argument Spine generation is **not** included (Phases 3–5).
+Hindi-English adaptation and multi-chunk synthesis are later phases.
 
 ## Setup
-
-From the repository root:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r backend/requirements.txt
 cp .env.example .env
+```
+
+For offline / CI tests without an API key:
+
+```bash
+# in .env
+LLM_MOCK=true
+```
+
+For real extraction:
+
+```bash
+LLM_MOCK=false
+LLM_API_KEY=...
+LLM_API_BASE=https://api.openai.com/v1
+LLM_MODEL=gpt-4o
 ```
 
 ## Run API
@@ -27,21 +41,24 @@ cd backend
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Health check: `GET http://localhost:8000/health` → `{"phase":"2"}`
+Health: `GET /health` → `{"phase":"3"}`
 
-## Endpoints
+## Phase 3 endpoints (additions)
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/books/upload` | Upload EPUB |
-| POST | `/books/{id}/process` | Start Phase 1–2 ingest (background) |
-| GET | `/books/{id}/status` | Real processing status |
-| GET | `/books/{id}` | Book metadata |
-| GET | `/books/{id}/chapters` | Detected chapter list |
-| GET | `/books/{id}/chapters/{cid}/source` | Normalised source chapter JSON |
-| GET | `/books/{id}/chapters/{cid}/chunks` | Chunk plan for extraction |
-| DELETE | `/books/{id}` | Delete book artefacts |
-| POST | `/demo/reset` | Clear local demo data |
+| GET | `/books/{id}/chapters/{cid}/spine` | English spine candidate (or `needs_synthesis` manifest) |
+
+Existing upload/process/status/source/chunks endpoints remain.
+
+## Success state
+
+After process completes with mock or live LLM:
+
+- `processing_status` = `analysing_chapters`
+- Per chapter:
+  - `*.spine.partial.{chunk_id}.json`
+  - `*.spine.candidate.json` (full English spine if single chunk; synthesis manifest if multi-chunk)
 
 ## Tests
 
@@ -51,17 +68,4 @@ cd backend
 pytest -q
 ```
 
-## Phase 2 success state
-
-After a successful process job:
-
-- `processing_status` = `preparing_blocks`
-- `current_stage` = `preparing_chapter_blocks`
-- `chapter_count` > 0
-- Per chapter:
-  - `data/books/{book_id}/chapters/{chapter_id}.source.json`
-  - `data/books/{book_id}/chapters/{chapter_id}.chunks.json`
-
-Block ID format: `{book_id}.{chapter_id}.{section_id}.blockNNN`
-
-Phase 3 will consume chunk allow-lists for Argument Spine extraction.
+Tests force `LLM_MOCK=true`.

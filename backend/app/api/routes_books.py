@@ -131,6 +131,25 @@ async def chapter_chunks(
         ) from exc
 
 
+@router.get("/{book_id}/chapters/{chapter_id}/spine")
+async def chapter_spine_candidate(
+    book_id: str,
+    chapter_id: str,
+    service: BookService = Depends(get_book_service),
+) -> dict:
+    """Return Phase 3 English spine candidate (or needs_synthesis manifest)."""
+    try:
+        return service.get_chapter_spine_candidate(book_id, chapter_id)
+    except KeyError as exc:
+        raise AppError(404, "book_not_found", f"Book not found: {book_id}") from exc
+    except FileNotFoundError as exc:
+        raise AppError(
+            409,
+            "spine_not_ready",
+            f"Argument Spine candidate not ready: {chapter_id}",
+        ) from exc
+
+
 @router.delete("/{book_id}", status_code=204)
 async def delete_book(
     book_id: str,
