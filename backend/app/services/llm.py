@@ -160,6 +160,11 @@ class MockLLMClient:
         self.settings = settings
 
     def complete_json(self, *, system: str, user: str) -> dict[str, Any]:
+        # Phase 5 hinglish adaptation path
+        adapt_marker = "===ENGLISH_SPINE_JSON==="
+        if adapt_marker in user:
+            return self._mock_adapt(user)
+
         # Phase 4 synthesis path
         synth_marker = "===PARTIAL_SPINES_JSON==="
         if synth_marker in user:
@@ -202,6 +207,17 @@ class MockLLMClient:
             },
             "validation": None,
         }
+
+    def _mock_adapt(self, user: str) -> dict[str, Any]:
+        from app.pipelines.align_spine import mock_adapt_spine
+
+        try:
+            raw = user.split("===ENGLISH_SPINE_JSON===", 1)[1].strip()
+            payload = json.loads(raw)
+            english = payload.get("spine") or payload
+        except Exception as exc:
+            raise LLMError(f"Mock adapt payload parse failed: {exc}") from exc
+        return mock_adapt_spine(english)
 
     def _mock_synthesis(self, user: str) -> dict[str, Any]:
         from app.pipelines.merge_spines import merge_partial_spines
