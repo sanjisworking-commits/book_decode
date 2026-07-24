@@ -30,8 +30,8 @@ class Settings(BaseSettings):
 
     max_epub_size_mb: int = 50
 
-    # Phase 2 chunking
-    chunk_token_limit: int = 6000
+    # Phase 2 chunking — prototype default keeps typical chapters as one LLM call
+    chunk_token_limit: int = 20000
     chunk_overlap_blocks: int = 2
 
     # LLM (multi-provider)
