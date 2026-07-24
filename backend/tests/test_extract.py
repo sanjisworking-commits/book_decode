@@ -49,7 +49,12 @@ def test_anthropic_rejects_max_tokens_stop_reason() -> None:
     fake_resp.raise_for_status = MagicMock()
     fake_resp.json.return_value = {
         "stop_reason": "max_tokens",
-        "content": [{"type": "text", "text": '{"nodes": [{"statement_en": "cut off'}]"}],
+        "content": [
+            {
+                "type": "text",
+                "text": '{"nodes": [{"statement_en": "cut off"}]}',
+            }
+        ],
     }
     fake_http = MagicMock()
     fake_http.__enter__.return_value = fake_http
