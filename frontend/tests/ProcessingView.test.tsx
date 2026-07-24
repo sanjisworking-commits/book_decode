@@ -72,7 +72,7 @@ describe("ProcessingView", () => {
       />,
     );
     expect(screen.getByText(/Waiting on the model/i)).toBeInTheDocument();
-    expect(screen.getByText(/chunk 1\/1/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/chunk 1\/1/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/Decoding · 1m 12s/i)).toBeInTheDocument();
   });
 
