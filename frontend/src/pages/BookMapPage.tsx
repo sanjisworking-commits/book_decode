@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { BrandHeader } from "../components/BrandHeader";
-import { isBookReady, isChapterReady } from "../lib/constants";
+import { isBookReady, isChapterReady, isTerminalBookStatus } from "../lib/constants";
 import {
   deleteBook,
   getBook,
@@ -20,27 +20,33 @@ export function BookMapPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const refresh = useCallback(async () => {
-    const [b, ch] = await Promise.all([getBook(bookId), listChapters(bookId)]);
-    setBook(b);
-    setChapters(ch.chapters);
-  }, [bookId]);
-
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    let timer: number | undefined;
+
+    async function tick() {
       try {
-        await refresh();
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof ApiError ? err.message : "Failed to load book map");
+        const [b, ch] = await Promise.all([getBook(bookId), listChapters(bookId)]);
+        if (cancelled) return;
+        setBook(b);
+        setChapters(ch.chapters);
+        setError(null);
+        if (!isTerminalBookStatus(b.processing_status)) {
+          timer = window.setTimeout(tick, 2000);
         }
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof ApiError ? err.message : "Failed to load book map");
+        timer = window.setTimeout(tick, 3000);
       }
-    })();
+    }
+
+    void tick();
     return () => {
       cancelled = true;
+      if (timer) window.clearTimeout(timer);
     };
-  }, [refresh]);
+  }, [bookId]);
 
   async function onDelete() {
     if (!window.confirm("Delete this book and all decoded artefacts?")) return;
@@ -91,7 +97,13 @@ export function BookMapPage() {
 
   const readyCount = chapters.filter((c) => isChapterReady(c.status)).length;
   const failedCount = chapters.filter((c) => c.status === "failed").length;
-  const partial = book?.processing_status === "completed_with_errors" || failedCount > 0;
+  const stillProcessing = book
+    ? !isTerminalBookStatus(book.processing_status)
+    : false;
+  const partial =
+    book?.processing_status === "completed_with_errors" ||
+    failedCount > 0 ||
+    (stillProcessing && readyCount > 0);
   const bookReady = book ? isBookReady(book.processing_status) : false;
 
   return (
@@ -99,7 +111,15 @@ export function BookMapPage() {
       <BrandHeader
         compact
         right={
-          <Link to={bookReady ? `/books/${bookId}/processing` : "/upload"} className="mono muted" style={{ fontSize: 12 }}>
+          <Link
+            to={
+              stillProcessing || bookReady
+                ? `/books/${bookId}/processing`
+                : "/upload"
+            }
+            className="mono muted"
+            style={{ fontSize: 12 }}
+          >
             ← Back
           </Link>
         }
@@ -119,7 +139,7 @@ export function BookMapPage() {
         >
           <div>
             <div className="eyebrow" style={{ marginBottom: 8 }}>
-              Decoded book
+              {stillProcessing ? "Decoding in progress" : "Decoded book"}
             </div>
             <h1 style={{ fontSize: 28, fontWeight: 600, letterSpacing: "-0.01em", margin: "0 0 6px" }}>
               {book?.title || "Untitled book"}
@@ -128,7 +148,12 @@ export function BookMapPage() {
               {book?.author || "Unknown author"} · {chapters.length} ch ·{" "}
               {partial ? (
                 <span style={{ color: "#8a6318", fontWeight: 500 }}>
-                  {readyCount} ready · {failedCount} attention
+                  {readyCount} ready
+                  {stillProcessing
+                    ? " · decoding remaining…"
+                    : failedCount > 0
+                      ? ` · ${failedCount} attention`
+                      : ""}
                 </span>
               ) : (
                 <span style={{ color: "#2f6640", fontWeight: 500 }}>{readyCount} ready</span>
@@ -237,7 +262,7 @@ export function BookMapPage() {
                   </button>
                 ) : (
                   <div className="mono faint" style={{ fontSize: 12.5 }}>
-                    Not ready yet
+                    {stillProcessing ? "Working…" : "Not ready yet"}
                   </div>
                 )}
               </div>

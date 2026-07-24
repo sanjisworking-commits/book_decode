@@ -36,6 +36,8 @@ export function ProcessingView({ status }: Props) {
     status.processing_status === "completed_with_errors";
   const failed = status.processing_status === "failed";
   const currentIndex = Math.max(0, Math.min(status.stage_index - 1, UI_STAGES.length - 1));
+  const readyCount = status.chapters.filter((c) => c.status === "completed").length;
+  const progressive = !done && !failed && readyCount > 0;
 
   return (
     <div className="surface" style={{ padding: "28px 28px 24px" }}>
@@ -43,14 +45,22 @@ export function ProcessingView({ status }: Props) {
         Decoding
       </div>
       <h1 style={{ fontSize: 28, fontWeight: 600, letterSpacing: "-0.02em", margin: "0 0 8px" }}>
-        {failed ? "Couldn’t decode this book" : done ? "Book ready" : "Working through your book"}
+        {failed
+          ? "Couldn’t decode this book"
+          : done
+            ? "Book ready"
+            : progressive
+              ? "First chapters ready"
+              : "Working through your book"}
       </h1>
       <p className="muted" style={{ margin: "0 0 24px", lineHeight: 1.5 }}>
         {failed
           ? status.error?.message ?? "A book-level failure stopped the pipeline."
           : done
             ? `${status.processed_chapter_count} of ${status.chapter_count} chapters decoded.`
-            : `Stage ${status.stage_index} of ${status.stages_total} · ${status.processed_chapter_count}/${status.chapter_count || "?"} chapters ready`}
+            : progressive
+              ? `${readyCount} of ${status.chapter_count || "?"} chapters ready — you can open the first while the rest keep decoding.`
+              : `Stage ${status.stage_index} of ${status.stages_total} · ${status.processed_chapter_count}/${status.chapter_count || "?"} chapters ready`}
       </p>
 
       {!failed && (

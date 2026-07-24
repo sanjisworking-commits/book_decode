@@ -102,3 +102,77 @@ def test_delete_book(client: TestClient, mini_epub_bytes: bytes) -> None:
     deleted = client.delete(f"/books/{book_id}")
     assert deleted.status_code == 204
     assert client.get(f"/books/{book_id}").status_code == 404
+
+
+def test_progressive_first_chapter_completes_before_later(
+    client: TestClient, mini_epub_bytes: bytes, monkeypatch
+) -> None:
+    """CH01 should reach completed while later chapters are still pending."""
+    from app.services.books import BookService
+
+    snapshots: list[dict] = []
+    original = BookService._refresh_progress_counts
+
+    def spy(self, book_id, chapters):  # type: ignore[no-untyped-def]
+        original(self, book_id, chapters)
+        snapshots.append(
+            {
+                "processed": sum(1 for c in chapters if c["status"] == "completed"),
+                "statuses": {c["chapter_id"]: c["status"] for c in chapters},
+            }
+        )
+
+    monkeypatch.setattr(BookService, "_refresh_progress_counts", spy)
+
+    upload = client.post(
+        "/books/upload",
+        files={"file": ("mini.epub", mini_epub_bytes, "application/epub+zip")},
+    )
+    assert upload.status_code == 201, upload.text
+    book_id = upload.json()["book_id"]
+
+    process = client.post(f"/books/{book_id}/process")
+    assert process.status_code == 202, process.text
+
+    deadline = time.time() + 120
+    status = None
+    while time.time() < deadline:
+        status_res = client.get(f"/books/{book_id}/status")
+        assert status_res.status_code == 200
+        status = status_res.json()
+        if status["processing_status"] in {
+            "completed",
+            "completed_with_errors",
+            "failed",
+        }:
+            break
+        time.sleep(0.5)
+
+    assert status is not None
+    assert status["processing_status"] != "failed", status
+    assert status["chapter_count"] >= 2
+    assert status["processed_chapter_count"] >= 2
+
+    # At least one mid-pipeline snapshot had exactly one completed chapter
+    # while another chapter was not yet completed.
+    progressive = [
+        s
+        for s in snapshots
+        if s["processed"] == 1
+        and any(st != "completed" for st in s["statuses"].values())
+    ]
+    assert progressive, f"expected progressive unlock snapshots, got {snapshots}"
+
+    # First chapter in order should be the one that completed first
+    first_ready = next(
+        cid
+        for cid, st in progressive[0]["statuses"].items()
+        if st == "completed"
+    )
+    chapters = client.get(f"/books/{book_id}/chapters").json()["chapters"]
+    assert chapters[0]["chapter_id"] == first_ready or first_ready in {
+        c["chapter_id"] for c in chapters if c["status"] == "completed"
+    }
+    # Spine for the early-ready chapter must be readable
+    spine = client.get(f"/books/{book_id}/chapters/{first_ready}/spine")
+    assert spine.status_code == 200, spine.text

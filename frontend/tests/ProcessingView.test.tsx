@@ -39,12 +39,28 @@ const base: ProcessingStatus = {
 };
 
 describe("ProcessingView", () => {
-  it("shows mid-pipeline stage list and chapter grid", () => {
+  it("shows progressive unlock copy when a chapter is already ready", () => {
     render(<ProcessingView status={base} />);
-    expect(screen.getByText(/Working through your book/i)).toBeInTheDocument();
+    expect(screen.getByText(/First chapters ready/i)).toBeInTheDocument();
+    expect(screen.getByText(/you can open the first/i)).toBeInTheDocument();
     expect(screen.getByText(/Analysing chapters/i)).toBeInTheDocument();
     expect(screen.getByText("One")).toBeInTheDocument();
     expect(screen.getByText("Two")).toBeInTheDocument();
+  });
+
+  it("shows working copy before any chapter completes", () => {
+    render(
+      <ProcessingView
+        status={{
+          ...base,
+          processed_chapter_count: 0,
+          chapters: base.chapters.map((c) =>
+            c.chapter_id === "ch01" ? { ...c, status: "extracting" } : c,
+          ),
+        }}
+      />,
+    );
+    expect(screen.getByText(/Working through your book/i)).toBeInTheDocument();
   });
 
   it("shows book ready heading when completed", () => {

@@ -68,59 +68,14 @@ class AdaptPipeline:
 
             chapter_id = ch["chapter_id"]
             self.db.update_book(book_id, current_chapter_id=chapter_id)
-
-            try:
-                english = self._load_english_spine(book_id, chapter_id)
-                bilingual = self._adapt_chapter(
-                    english=english,
-                    system=system,
-                    prompt_hash=prompt_hash,
-                )
-                path = self.fs.chapter_spine_path(book_id, chapter_id)
-                self.fs.write_json(path, bilingual)
-                # Keep candidate pointing at latest readable spine for API
-                self.fs.write_json(
-                    self.fs.chapter_spine_candidate_path(book_id, chapter_id), bilingual
-                )
-
-                updated.append(
-                    {
-                        **ch,
-                        "status": ChapterStatus.PENDING.value,
-                        "error": None,
-                        "preview": {
-                            **(ch.get("preview") or {}),
-                            "adaptation": "ok",
-                            "language_modes": ["en", "hinglish"],
-                            "node_count": len(bilingual.get("nodes") or []),
-                        },
-                    }
-                )
-                summaries.append(
-                    {
-                        "chapter_id": chapter_id,
-                        "node_count": len(bilingual.get("nodes") or []),
-                        "path": str(path),
-                        "bilingual_aligned": (
-                            bilingual.get("validation") or {}
-                        ).get("bilingual_aligned"),
-                    }
-                )
-            except Exception as exc:
-                logger.exception(
-                    "Hinglish adaptation failed chapter=%s book=%s", chapter_id, book_id
-                )
-                updated.append(
-                    {
-                        **ch,
-                        "status": ChapterStatus.FAILED.value,
-                        "error": {
-                            "code": "adaptation_failed",
-                            "message": str(exc),
-                            "details": None,
-                        },
-                    }
-                )
+            result = self.adapt_chapter(
+                book_id,
+                ch,
+                system=system,
+                prompt_hash=prompt_hash,
+            )
+            updated.append(result["chapter"])
+            summaries.append(result["summary"])
 
         self.db.replace_chapters(book_id, updated)
         failed = sum(1 for c in updated if c["status"] == ChapterStatus.FAILED.value)
@@ -171,6 +126,79 @@ class AdaptPipeline:
         )
         self.fs.write_json(meta_path, metadata)
         logger.info("Phase 5 complete book_id=%s ok=%s failed=%s", book_id, ok, failed)
+
+    def adapt_chapter(
+        self,
+        book_id: str,
+        chapter: dict[str, Any],
+        *,
+        system: str | None = None,
+        prompt_hash: str | None = None,
+    ) -> dict[str, Any]:
+        """Adapt one chapter to Hindi-English. Returns {chapter, summary}."""
+        chapter_id = chapter["chapter_id"]
+        if system is None or prompt_hash is None:
+            prompt_text, prompt_hash = load_prompt("hinglish_adaptation.md")
+            system = self._system_prompt(prompt_text)
+
+        try:
+            english = self._load_english_spine(book_id, chapter_id)
+            bilingual = self._adapt_chapter(
+                english=english,
+                system=system,
+                prompt_hash=prompt_hash,
+            )
+            path = self.fs.chapter_spine_path(book_id, chapter_id)
+            self.fs.write_json(path, bilingual)
+            # Keep candidate pointing at latest readable spine for API
+            self.fs.write_json(
+                self.fs.chapter_spine_candidate_path(book_id, chapter_id), bilingual
+            )
+
+            done = {
+                **chapter,
+                "status": ChapterStatus.PENDING.value,
+                "error": None,
+                "preview": {
+                    **(chapter.get("preview") or {}),
+                    "adaptation": "ok",
+                    "language_modes": ["en", "hinglish"],
+                    "node_count": len(bilingual.get("nodes") or []),
+                },
+            }
+            return {
+                "chapter": done,
+                "summary": {
+                    "chapter_id": chapter_id,
+                    "ok": True,
+                    "node_count": len(bilingual.get("nodes") or []),
+                    "path": str(path),
+                    "bilingual_aligned": (bilingual.get("validation") or {}).get(
+                        "bilingual_aligned"
+                    ),
+                },
+            }
+        except Exception as exc:
+            logger.exception(
+                "Hinglish adaptation failed chapter=%s book=%s", chapter_id, book_id
+            )
+            failed = {
+                **chapter,
+                "status": ChapterStatus.FAILED.value,
+                "error": {
+                    "code": "adaptation_failed",
+                    "message": str(exc),
+                    "details": None,
+                },
+            }
+            return {
+                "chapter": failed,
+                "summary": {
+                    "chapter_id": chapter_id,
+                    "ok": False,
+                    "reason": str(exc),
+                },
+            }
 
     def _load_english_spine(self, book_id: str, chapter_id: str) -> dict[str, Any]:
         en_path = self.fs.chapter_spine_en_path(book_id, chapter_id)

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { BrandHeader } from "../components/BrandHeader";
 import { ProcessingView } from "../components/ProcessingView";
-import { isBookReady, isTerminalBookStatus } from "../lib/constants";
+import { isBookReady, isChapterReady, isTerminalBookStatus } from "../lib/constants";
 import { getStatus, startProcessing } from "../services/api";
 import type { ProcessingStatus } from "../types/api";
 import { ApiError } from "../types/api";
@@ -59,6 +59,9 @@ export function ProcessingPage() {
 
   const ready = status ? isBookReady(status.processing_status) : false;
   const failed = status?.processing_status === "failed";
+  const firstReady = status?.chapters.find((c) => isChapterReady(c.status));
+  const stillProcessing = status ? !isTerminalBookStatus(status.processing_status) : false;
+  const canOpenEarly = Boolean(firstReady) && stillProcessing;
 
   return (
     <div className="page">
@@ -81,6 +84,26 @@ export function ProcessingPage() {
       {status && <ProcessingView status={status} />}
 
       <div style={{ marginTop: 20, display: "flex", gap: 12, flexWrap: "wrap" }}>
+        {canOpenEarly && firstReady && (
+          <>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() =>
+                navigate(`/books/${bookId}/chapters/${firstReady.chapter_id}`)
+              }
+            >
+              Open first chapter →
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => navigate(`/books/${bookId}/map`)}
+            >
+              Open Book Map
+            </button>
+          </>
+        )}
         {ready && (
           <button
             type="button"

@@ -4,6 +4,7 @@ import { SourcePreview, type SourcePreviewState } from "../components/SourcePrev
 import { ProvenanceLegend } from "../components/ProvenanceLegend";
 import { SpineCanvas1a } from "../components/spine/SpineCanvas1a";
 import { SpineThreaded1b } from "../components/spine/SpineThreaded1b";
+import { isChapterReady } from "../lib/constants";
 import { getChapterSource, getChapterSpine, listChapters } from "../services/api";
 import type { ArgumentSpine, ChapterSummary, LanguageMode, SourceBlock } from "../types/api";
 import { ApiError } from "../types/api";
@@ -87,6 +88,9 @@ export function SpinePage() {
   const prev = chapterIndex > 0 ? chapters[chapterIndex - 1] : null;
   const next =
     chapterIndex >= 0 && chapterIndex < chapters.length - 1 ? chapters[chapterIndex + 1] : null;
+  const remainingDecoding = chapters.some(
+    (c) => c.chapter_id !== chapterId && !isChapterReady(c.status) && c.status !== "failed",
+  );
 
   const openSources = useCallback(
     async (ids: string[]) => {
@@ -244,6 +248,22 @@ export function SpinePage() {
   return (
     <div className="page" style={{ maxWidth: 1200 }}>
       {chrome}
+      {remainingDecoding && (
+        <div
+          className="mono"
+          style={{
+            fontSize: 12.5,
+            color: "var(--bd-muted)",
+            background: "var(--bd-surface-2)",
+            border: "1px solid var(--bd-border)",
+            borderRadius: 8,
+            padding: "10px 14px",
+            marginBottom: 14,
+          }}
+        >
+          Decoding remaining chapters in the background…
+        </div>
+      )}
       <div style={{ marginBottom: 14 }}>
         <ProvenanceLegend />
       </div>
