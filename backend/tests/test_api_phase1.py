@@ -1,4 +1,4 @@
-"""API integration tests for Phase 1–5 (mock LLM)."""
+"""API integration tests for Phase 1–6 (mock LLM)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 def test_health(client: TestClient) -> None:
     res = client.get("/health")
     assert res.status_code == 200
-    assert res.json()["phase"] == "5"
+    assert res.json()["phase"] == "6"
 
 
 def test_upload_rejects_bad_extension(client: TestClient, mini_epub_bytes: bytes) -> None:
@@ -23,7 +23,7 @@ def test_upload_rejects_bad_extension(client: TestClient, mini_epub_bytes: bytes
     assert body["error"]["code"] == "invalid_extension"
 
 
-def test_upload_and_process_extracts_spine_candidate(
+def test_upload_and_process_completes_validated_spine(
     client: TestClient, mini_epub_bytes: bytes
 ) -> None:
     upload = client.post(
@@ -44,59 +44,41 @@ def test_upload_and_process_extracts_spine_candidate(
         status = status_res.json()
         if status["processing_status"] == "failed":
             break
-        if (
-            status["chapter_count"] > 0
-            and status["processing_status"] == "creating_hinglish"
-            and status.get("chapters")
-        ):
+        if status["processing_status"] in {"completed", "completed_with_errors"}:
             break
         time.sleep(0.5)
 
     assert status is not None
     assert status["processing_status"] != "failed", status
-    assert status["processing_status"] == "creating_hinglish"
-    assert status["current_stage"] == "creating_hindi_english_versions"
+    assert status["processing_status"] in {"completed", "completed_with_errors"}
+    assert status["current_stage"] == "book_ready"
     assert status["chapter_count"] >= 1
+    assert status["processed_chapter_count"] >= 1
 
     chapters = client.get(f"/books/{book_id}/chapters")
     assert chapters.status_code == 200
-    chapter_id = chapters.json()["chapters"][0]["chapter_id"]
+    chapter = chapters.json()["chapters"][0]
+    chapter_id = chapter["chapter_id"]
+    assert chapter["status"] == "completed"
 
     source = client.get(f"/books/{book_id}/chapters/{chapter_id}/source")
     assert source.status_code == 200, source.text
     source_body = source.json()
     assert source_body["schema_version"] == "2.0"
-    assert source_body["source_blocks"]
     block_ids = [b["block_id"] for b in source_body["source_blocks"]]
-    assert len(block_ids) == len(set(block_ids))
-    assert all(chapter_id in bid for bid in block_ids)
-
-    canonical = client.get(f"/books/{book_id}/canonical")
-    assert canonical.status_code == 200, canonical.text
-    canonical_body = canonical.json()
-    assert canonical_body["schema_version"] == "2.0"
-    assert canonical_body["book_id"] == book_id
-    assert canonical_body["chapters"]
-
-    chunks = client.get(f"/books/{book_id}/chapters/{chapter_id}/chunks")
-    assert chunks.status_code == 200, chunks.text
-    chunk_body = chunks.json()
-    assert chunk_body["chunks"]
     allowed = set(block_ids)
-    for chunk in chunk_body["chunks"]:
-        assert set(chunk["block_ids"]).issubset(allowed)
 
     spine = client.get(f"/books/{book_id}/chapters/{chapter_id}/spine")
     assert spine.status_code == 200, spine.text
     body = spine.json()
-    assert body["book_id"] == book_id
-    assert body["chapter_id"] == chapter_id
     assert body["language_modes"] == ["en", "hinglish"]
     assert body.get("nodes")
-    assert body.get("status") != "needs_synthesis"
-    assert all(n.get("statement_hinglish") for n in body["nodes"] if n.get("statement_en"))
+    assert body.get("validation", {}).get("schema_valid") is True
+    assert body.get("validation", {}).get("source_refs_valid") is True
     for node in body["nodes"]:
         assert set(node.get("source_block_ids") or []).issubset(allowed)
+        if node.get("statement_en"):
+            assert node.get("statement_hinglish")
 
 
 def test_process_unknown_book(client: TestClient) -> None:

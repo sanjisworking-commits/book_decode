@@ -70,8 +70,12 @@ class FilesystemStore:
         return self.chapters_dir(book_id) / f"{chapter_id}.spine.en.json"
 
     def chapter_spine_path(self, book_id: str, chapter_id: str) -> Path:
-        """Final bilingual spine (Phase 5+); may not exist yet."""
+        """Final bilingual spine (Phase 5–6); may not exist yet."""
         return self.chapters_dir(book_id) / f"{chapter_id}.spine.json"
+
+    def chapter_spine_invalid_path(self, book_id: str, chapter_id: str) -> Path:
+        """Fail-closed artefact when validation exhausts retries."""
+        return self.chapters_dir(book_id) / f"{chapter_id}.spine.invalid.json"
 
     def write_json(self, path: Path, payload: Any) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

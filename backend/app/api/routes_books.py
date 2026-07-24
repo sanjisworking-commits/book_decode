@@ -154,7 +154,7 @@ async def chapter_spine_candidate(
     chapter_id: str,
     service: BookService = Depends(get_book_service),
 ) -> dict:
-    """Return bilingual Argument Spine (Phase 5) when available."""
+    """Return validated bilingual Argument Spine when available."""
     try:
         return service.get_chapter_spine_candidate(book_id, chapter_id)
     except KeyError as exc:
@@ -165,6 +165,34 @@ async def chapter_spine_candidate(
             "spine_not_ready",
             f"Argument Spine candidate not ready: {chapter_id}",
         ) from exc
+
+
+@router.post(
+    "/{book_id}/chapters/{chapter_id}/retry",
+    response_model=ProcessingStatusResponse,
+    status_code=202,
+)
+async def retry_chapter(
+    book_id: str,
+    chapter_id: str,
+    service: BookService = Depends(get_book_service),
+    force: bool = False,
+) -> ProcessingStatusResponse:
+    """Re-queue validation/repair for a chapter (Phase 6)."""
+    try:
+        return service.retry_chapter(book_id, chapter_id, force=force)
+    except KeyError as exc:
+        raise AppError(404, "book_not_found", f"Book not found: {book_id}") from exc
+    except FileNotFoundError as exc:
+        raise AppError(404, "chapter_not_found", f"Chapter not found: {chapter_id}") from exc
+    except RuntimeError as exc:
+        if str(exc) == "max_retries_exceeded":
+            raise AppError(
+                409,
+                "max_retries_exceeded",
+                "Chapter has reached the maximum retry count.",
+            ) from exc
+        raise
 
 
 @router.delete("/{book_id}", status_code=204)

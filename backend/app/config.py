@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 8192
     llm_mock: bool = False
 
+    # Phase 6 validation / retries
+    max_chapter_retries: int = 3
+    retry_backoff_seconds: float = 2.0
+
     def ensure_directories(self) -> None:
         for path in (
             self.data_dir,

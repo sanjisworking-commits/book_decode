@@ -2,11 +2,9 @@
 
 ## Current phase
 
-**Phase 5 — Hindi-English adaptation**
+**Phase 6 — Validation and storage**
 
-Pipeline runs Phase 1 → 2 (canonical `book.json` + chunks) → 3 (extract) → 4 (synthesise) → 5 (Hinglish fields on the English spine). Spec: [`docs/CANONICAL_BOOK_SCHEMA.md`](../docs/CANONICAL_BOOK_SCHEMA.md).
-
-Phase 6 will add repair retries and final validation persistence.
+Pipeline runs Phase 1 → 5, then Phase 6 validates schema + source refs (with repair retries), persists only valid spines, and sets book status to `completed` or `completed_with_errors`.
 
 ## Setup
 
@@ -17,45 +15,17 @@ pip install -r backend/requirements.txt
 cp .env.example .env
 ```
 
-For offline / CI tests without an API key:
+Offline / CI:
 
 ```bash
-# in .env
 LLM_MOCK=true
 ```
 
-## LLM providers
-
-Set `LLM_PROVIDER` to one of: `openai`, `anthropic`, `openai_compatible`.
-
-### OpenAI
+Retry controls (`.env`):
 
 ```bash
-LLM_MOCK=false
-LLM_PROVIDER=openai
-LLM_API_BASE=https://api.openai.com/v1
-LLM_API_KEY=sk-...
-LLM_MODEL=gpt-4o
-```
-
-### Anthropic Claude
-
-```bash
-LLM_MOCK=false
-LLM_PROVIDER=anthropic
-LLM_API_BASE=https://api.anthropic.com
-LLM_API_KEY=sk-ant-...
-LLM_MODEL=claude-sonnet-4-20250514
-```
-
-### Any OpenAI-compatible gateway
-
-```bash
-LLM_MOCK=false
-LLM_PROVIDER=openai_compatible
-LLM_API_BASE=https://api.groq.com/openai/v1
-LLM_API_KEY=...
-LLM_MODEL=llama-3.3-70b-versatile
+MAX_CHAPTER_RETRIES=3
+RETRY_BACKOFF_SECONDS=2
 ```
 
 ## Run API
@@ -66,35 +36,26 @@ cd backend
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Health: `GET /health` → `{"phase":"5"}`
+Health: `GET /health` → `{"phase":"6"}`
 
 ## Endpoints
 
 | Method | Path | Purpose |
 |--------|------|---------|
 | POST | `/books/upload` | Upload EPUB |
-| POST | `/books/{id}/process` | Start Phase 1–5 pipeline (background) |
+| POST | `/books/{id}/process` | Start Phase 1–6 pipeline |
 | GET | `/books/{id}/status` | Real processing status |
-| GET | `/books/{id}` | Book metadata |
-| GET | `/books/{id}/chapters` | Detected chapter list |
-| GET | `/books/{id}/canonical` | Canonical hierarchical `book.json` |
-| GET | `/books/{id}/chapters/{cid}/source` | Normalised source chapter JSON |
-| GET | `/books/{id}/chapters/{cid}/chunks` | Chunk plan for extraction |
-| GET | `/books/{id}/chapters/{cid}/spine` | Bilingual Argument Spine |
+| GET | `/books/{id}/chapters/{cid}/spine` | Validated bilingual spine |
+| POST | `/books/{id}/chapters/{cid}/retry` | Retry failed chapter validation (`?force=true`) |
 | DELETE | `/books/{id}` | Delete book artefacts |
 | POST | `/demo/reset` | Clear local demo data |
 
 ## Success state
 
-After process completes with mock or live LLM:
-
-- `processing_status` = `creating_hinglish`
-- Per chapter:
-  - `*.spine.partial.{chunk_id}.json`
-  - `*.spine.en.json` — English synthesised spine
-  - `*.spine.json` — bilingual spine (`language_modes: ["en","hinglish"]`)
-
-Block ID format: `{book_id}.{chapter_id}.{section_id}.blockNNN`
+- `processing_status` = `completed` (or `completed_with_errors` if some chapters failed)
+- `current_stage` = `book_ready`
+- Per successful chapter: `status=completed`, `*.spine.json` with `validation.schema_valid=true`
+- Invalid spines after max repairs → `*.spine.invalid.json` and chapter `failed` (never marked completed)
 
 ## Tests
 
@@ -103,5 +64,3 @@ source .venv/bin/activate
 cd backend
 pytest -q
 ```
-
-Tests force `LLM_MOCK=true`.

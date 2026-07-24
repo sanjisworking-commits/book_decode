@@ -160,6 +160,12 @@ class MockLLMClient:
         self.settings = settings
 
     def complete_json(self, *, system: str, user: str) -> dict[str, Any]:
+        # Phase 6 repair paths
+        if "===REPAIR_SPINE_JSON===" in user:
+            return self._mock_repair_schema(user)
+        if "===SOURCE_REPAIR_JSON===" in user:
+            return self._mock_repair_sources(user)
+
         # Phase 5 hinglish adaptation path
         adapt_marker = "===ENGLISH_SPINE_JSON==="
         if adapt_marker in user:
@@ -207,6 +213,52 @@ class MockLLMClient:
             },
             "validation": None,
         }
+
+    def _mock_repair_schema(self, user: str) -> dict[str, Any]:
+        import copy
+
+        try:
+            raw = user.split("===REPAIR_SPINE_JSON===", 1)[1].strip()
+            payload = json.loads(raw)
+            spine = copy.deepcopy(payload.get("spine") or {})
+        except Exception as exc:
+            raise LLMError(f"Mock schema repair parse failed: {exc}") from exc
+        spine["schema_version"] = "1.0"
+        spine.setdefault("language_modes", ["en"])
+        spine.setdefault("nodes", [])
+        for i, node in enumerate(spine["nodes"]):
+            node.setdefault("id", f"repair-n{i+1:02d}")
+            node.setdefault("node_type", "central_claim")
+            node.setdefault("statement_en", node.get("statement_en"))
+            node.setdefault("source_status", "ai_inference")
+            node.setdefault("source_block_ids", [])
+            node.setdefault("order", i)
+            node.setdefault("warnings", [])
+            warnings = list(node.get("warnings") or [])
+            if "mock_schema_repair" not in warnings:
+                warnings.append("mock_schema_repair")
+            node["warnings"] = warnings
+        return spine
+
+    def _mock_repair_sources(self, user: str) -> dict[str, Any]:
+        import copy
+
+        from app.pipelines.validate_spine import strip_invalid_source_refs
+
+        try:
+            raw = user.split("===SOURCE_REPAIR_JSON===", 1)[1].strip()
+            payload = json.loads(raw)
+            spine = copy.deepcopy(payload.get("spine") or {})
+            allowed = set(payload.get("allow_listed_block_ids") or [])
+        except Exception as exc:
+            raise LLMError(f"Mock source repair parse failed: {exc}") from exc
+        cleaned = strip_invalid_source_refs(spine, allowed)
+        for node in cleaned.get("nodes") or []:
+            warnings = list(node.get("warnings") or [])
+            if "mock_source_repair" not in warnings:
+                warnings.append("mock_source_repair")
+            node["warnings"] = warnings
+        return cleaned
 
     def _mock_adapt(self, user: str) -> dict[str, Any]:
         from app.pipelines.align_spine import mock_adapt_spine
