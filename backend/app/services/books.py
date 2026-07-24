@@ -5,16 +5,18 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from app.domain.enums import (
-    BOOK_STATUS_TO_UI_STAGE,
-    UI_STAGE_ORDER,
-    BookProcessingStatus,
-    UIStage,
-)
 from app.pipelines.adapt import AdaptPipeline
 from app.pipelines.extract import ExtractPipeline
 from app.pipelines.ingest import IngestPipeline
 from app.pipelines.synthesise import SynthesisePipeline
+from app.pipelines.validate_persist import ValidatePersistPipeline
+from app.domain.enums import (
+    BOOK_STATUS_TO_UI_STAGE,
+    UI_STAGE_ORDER,
+    BookProcessingStatus,
+    ChapterStatus,
+    UIStage,
+)
 from app.schemas.api_models import (
     BookMetadata,
     ChapterListResponse,
@@ -46,6 +48,7 @@ _IDLE_COMPLETE_STATUSES = {
     BookProcessingStatus.ANALYSING_CHAPTERS.value,
     BookProcessingStatus.CONSTRUCTING_SPINES.value,
     BookProcessingStatus.CREATING_HINGLISH.value,
+    BookProcessingStatus.VALIDATING.value,
 }
 
 
@@ -57,6 +60,7 @@ class BookService:
         self.extract = ExtractPipeline(db, fs)
         self.synthesise = SynthesisePipeline(db, fs)
         self.adapt = AdaptPipeline(db, fs)
+        self.validate_persist = ValidatePersistPipeline(db, fs)
 
     def upload_epub(self, *, filename: str, data: bytes, max_size_bytes: int) -> BookMetadata:
         result = validate_epub_bytes(data, filename=filename, max_size_bytes=max_size_bytes)
@@ -119,28 +123,98 @@ class BookService:
         return self.get_status(book_id)
 
     def run_ingest_sync(self, book_id: str) -> None:
-        """Run Phase 1–5 pipeline (ingest → extract → synthesise → adapt)."""
+        """Run Phase 1–6 pipeline (ingest → … → validate/persist)."""
         self.ingest.run(book_id)
         book = self.db.get_book(book_id)
         if not book:
             return
         if book["processing_status"] == BookProcessingStatus.FAILED.value:
             return
-        # Continue into Phase 3 when Phase 2 left book in preparing_blocks
         if book["processing_status"] == BookProcessingStatus.PREPARING_BLOCKS.value:
             self.extract.run(book_id)
         book = self.db.get_book(book_id)
         if not book or book["processing_status"] == BookProcessingStatus.FAILED.value:
             return
-        # Continue into Phase 4 when Phase 3 left book in analysing_chapters
         if book["processing_status"] == BookProcessingStatus.ANALYSING_CHAPTERS.value:
             self.synthesise.run(book_id)
         book = self.db.get_book(book_id)
         if not book or book["processing_status"] == BookProcessingStatus.FAILED.value:
             return
-        # Continue into Phase 5 when Phase 4 left book in constructing_spines
         if book["processing_status"] == BookProcessingStatus.CONSTRUCTING_SPINES.value:
             self.adapt.run(book_id)
+        book = self.db.get_book(book_id)
+        if not book or book["processing_status"] == BookProcessingStatus.FAILED.value:
+            return
+        if book["processing_status"] == BookProcessingStatus.CREATING_HINGLISH.value:
+            self.validate_persist.run(book_id)
+
+    def retry_chapter(
+        self, book_id: str, chapter_id: str, *, force: bool = False
+    ) -> ProcessingStatusResponse:
+        """Re-queue validation/repair for a failed chapter (Phase 6)."""
+        book = self.db.get_book(book_id)
+        if not book:
+            raise KeyError(book_id)
+        chapters = self.db.list_chapters(book_id)
+        target = next((c for c in chapters if c["chapter_id"] == chapter_id), None)
+        if not target:
+            raise FileNotFoundError(chapter_id)
+
+        retry_count = int(target.get("retry_count") or 0)
+        max_retries = self.validate_persist.max_retries
+        if not force and retry_count >= max_retries:
+            raise RuntimeError("max_retries_exceeded")
+
+        # Mark retrying and bump count
+        updated = []
+        for c in chapters:
+            if c["chapter_id"] == chapter_id:
+                updated.append(
+                    {
+                        **c,
+                        "status": ChapterStatus.RETRYING.value,
+                        "retry_count": retry_count + 1,
+                        "error": None,
+                    }
+                )
+            else:
+                updated.append(c)
+        self.db.replace_chapters(book_id, updated)
+        self.db.update_book(
+            book_id,
+            processing_status=BookProcessingStatus.VALIDATING.value,
+            current_stage=UIStage.VALIDATING_OUTPUT.value,
+            current_chapter_id=chapter_id,
+        )
+
+        result = self.validate_persist.validate_chapter(
+            book_id, chapter_id, force=force
+        )
+        # Merge result back into chapter list
+        final_chapters = []
+        for c in self.db.list_chapters(book_id):
+            if c["chapter_id"] == chapter_id:
+                final_chapters.append(result["chapter"])
+            else:
+                final_chapters.append(c)
+        self.db.replace_chapters(book_id, final_chapters)
+        self.validate_persist._finalise_book(
+            self.db.get_book(book_id) or book,
+            book.get("job_id"),
+            final_chapters,
+            [
+                result["summary"],
+                *[
+                    {
+                        "chapter_id": c["chapter_id"],
+                        "ok": c["status"] == ChapterStatus.COMPLETED.value,
+                    }
+                    for c in final_chapters
+                    if c["chapter_id"] != chapter_id
+                ],
+            ],
+        )
+        return self.get_status(book_id)
 
     def get_chapter_source(self, book_id: str, chapter_id: str) -> dict[str, Any]:
         book = self.db.get_book(book_id)
