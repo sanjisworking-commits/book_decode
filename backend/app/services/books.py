@@ -11,6 +11,7 @@ from app.domain.enums import (
     BookProcessingStatus,
     UIStage,
 )
+from app.pipelines.adapt import AdaptPipeline
 from app.pipelines.extract import ExtractPipeline
 from app.pipelines.ingest import IngestPipeline
 from app.pipelines.synthesise import SynthesisePipeline
@@ -44,6 +45,7 @@ _IDLE_COMPLETE_STATUSES = {
     BookProcessingStatus.PREPARING_BLOCKS.value,
     BookProcessingStatus.ANALYSING_CHAPTERS.value,
     BookProcessingStatus.CONSTRUCTING_SPINES.value,
+    BookProcessingStatus.CREATING_HINGLISH.value,
 }
 
 
@@ -54,6 +56,7 @@ class BookService:
         self.ingest = IngestPipeline(db, fs)
         self.extract = ExtractPipeline(db, fs)
         self.synthesise = SynthesisePipeline(db, fs)
+        self.adapt = AdaptPipeline(db, fs)
 
     def upload_epub(self, *, filename: str, data: bytes, max_size_bytes: int) -> BookMetadata:
         result = validate_epub_bytes(data, filename=filename, max_size_bytes=max_size_bytes)
@@ -116,7 +119,7 @@ class BookService:
         return self.get_status(book_id)
 
     def run_ingest_sync(self, book_id: str) -> None:
-        """Run Phase 1–4 pipeline (ingest → extract → synthesise)."""
+        """Run Phase 1–5 pipeline (ingest → extract → synthesise → adapt)."""
         self.ingest.run(book_id)
         book = self.db.get_book(book_id)
         if not book:
@@ -132,6 +135,12 @@ class BookService:
         # Continue into Phase 4 when Phase 3 left book in analysing_chapters
         if book["processing_status"] == BookProcessingStatus.ANALYSING_CHAPTERS.value:
             self.synthesise.run(book_id)
+        book = self.db.get_book(book_id)
+        if not book or book["processing_status"] == BookProcessingStatus.FAILED.value:
+            return
+        # Continue into Phase 5 when Phase 4 left book in constructing_spines
+        if book["processing_status"] == BookProcessingStatus.CONSTRUCTING_SPINES.value:
+            self.adapt.run(book_id)
 
     def get_chapter_source(self, book_id: str, chapter_id: str) -> dict[str, Any]:
         book = self.db.get_book(book_id)
@@ -164,7 +173,10 @@ class BookService:
         book = self.db.get_book(book_id)
         if not book:
             raise KeyError(book_id)
-        # Prefer English synthesised spine when present
+        # Prefer bilingual spine, then English synthesised, then candidate
+        bilingual = self.fs.chapter_spine_path(book_id, chapter_id)
+        if bilingual.exists():
+            return self.fs.read_json(bilingual)
         en_path = self.fs.chapter_spine_en_path(book_id, chapter_id)
         if en_path.exists():
             return self.fs.read_json(en_path)

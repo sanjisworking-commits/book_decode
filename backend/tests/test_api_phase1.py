@@ -1,4 +1,4 @@
-"""API integration tests for Phase 1–4 (mock LLM)."""
+"""API integration tests for Phase 1–5 (mock LLM)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 def test_health(client: TestClient) -> None:
     res = client.get("/health")
     assert res.status_code == 200
-    assert res.json()["phase"] == "4"
+    assert res.json()["phase"] == "5"
 
 
 def test_upload_rejects_bad_extension(client: TestClient, mini_epub_bytes: bytes) -> None:
@@ -46,7 +46,7 @@ def test_upload_and_process_extracts_spine_candidate(
             break
         if (
             status["chapter_count"] > 0
-            and status["processing_status"] == "constructing_spines"
+            and status["processing_status"] == "creating_hinglish"
             and status.get("chapters")
         ):
             break
@@ -54,8 +54,8 @@ def test_upload_and_process_extracts_spine_candidate(
 
     assert status is not None
     assert status["processing_status"] != "failed", status
-    assert status["processing_status"] == "constructing_spines"
-    assert status["current_stage"] == "constructing_argument_spines"
+    assert status["processing_status"] == "creating_hinglish"
+    assert status["current_stage"] == "creating_hindi_english_versions"
     assert status["chapter_count"] >= 1
 
     chapters = client.get(f"/books/{book_id}/chapters")
@@ -91,10 +91,10 @@ def test_upload_and_process_extracts_spine_candidate(
     body = spine.json()
     assert body["book_id"] == book_id
     assert body["chapter_id"] == chapter_id
-    assert body["language_modes"] == ["en"]
+    assert body["language_modes"] == ["en", "hinglish"]
     assert body.get("nodes")
     assert body.get("status") != "needs_synthesis"
-    assert all(n.get("statement_hinglish") is None for n in body["nodes"])
+    assert all(n.get("statement_hinglish") for n in body["nodes"] if n.get("statement_en"))
     for node in body["nodes"]:
         assert set(node.get("source_block_ids") or []).issubset(allowed)
 

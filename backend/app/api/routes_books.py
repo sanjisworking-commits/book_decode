@@ -154,7 +154,7 @@ async def chapter_spine_candidate(
     chapter_id: str,
     service: BookService = Depends(get_book_service),
 ) -> dict:
-    """Return Phase 4 English chapter spine (post-synthesis)."""
+    """Return bilingual Argument Spine (Phase 5) when available."""
     try:
         return service.get_chapter_spine_candidate(book_id, chapter_id)
     except KeyError as exc:
