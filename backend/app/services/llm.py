@@ -24,8 +24,15 @@ _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE | re.MULTILINE
 DEFAULT_OPENAI_BASE = "https://api.openai.com/v1"
 DEFAULT_OPENAI_MODEL = "gpt-4o"
 DEFAULT_ANTHROPIC_BASE = "https://api.anthropic.com"
-DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6"
 ANTHROPIC_VERSION = "2023-06-01"
+# Retired Anthropic model IDs → recommended replacements (404 after retirement).
+RETIRED_ANTHROPIC_MODELS: dict[str, str] = {
+    "claude-sonnet-4-20250514": "claude-sonnet-4-6",
+    "claude-opus-4-20250514": "claude-opus-4-8",
+    "claude-sonnet-4-0": "claude-sonnet-4-6",
+    "claude-opus-4-0": "claude-opus-4-8",
+}
 
 VALID_PROVIDERS = frozenset({"openai", "anthropic", "openai_compatible"})
 
@@ -380,12 +387,15 @@ def _mock_nodes(chapter_id: str, cited: list[str], excerpt: str) -> list[dict[st
 
 
 def _apply_provider_defaults(settings: Settings) -> Settings:
-    """Apply Anthropic base/model defaults when still on OpenAI defaults."""
+    """Apply Anthropic base/model defaults when still on OpenAI or retired IDs."""
     updates: dict[str, Any] = {}
     if settings.llm_api_base.rstrip("/") == DEFAULT_OPENAI_BASE.rstrip("/"):
         updates["llm_api_base"] = DEFAULT_ANTHROPIC_BASE
-    if settings.llm_model == DEFAULT_OPENAI_MODEL:
+    model = settings.llm_model
+    if model == DEFAULT_OPENAI_MODEL:
         updates["llm_model"] = DEFAULT_ANTHROPIC_MODEL
+    elif model in RETIRED_ANTHROPIC_MODELS:
+        updates["llm_model"] = RETIRED_ANTHROPIC_MODELS[model]
     if not updates:
         return settings
     return settings.model_copy(update=updates)

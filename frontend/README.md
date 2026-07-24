@@ -37,7 +37,7 @@ LLM_MOCK=false
 LLM_PROVIDER=anthropic
 LLM_API_BASE=https://api.anthropic.com
 LLM_API_KEY=sk-ant-...
-LLM_MODEL=claude-sonnet-4-20250514
+LLM_MODEL=claude-sonnet-4-6
 ```
 
 2. Start backend **without** `LLM_MOCK=true` on the command line (shell env overrides `.env`).

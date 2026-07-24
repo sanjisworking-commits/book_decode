@@ -127,7 +127,19 @@ def test_anthropic_defaults_when_openai_base_left() -> None:
         )
     )
     assert resolved.llm_api_base == "https://api.anthropic.com"
-    assert resolved.llm_model == "claude-sonnet-4-20250514"
+    assert resolved.llm_model == "claude-sonnet-4-6"
+
+
+def test_anthropic_remaps_retired_sonnet_4_model() -> None:
+    resolved = resolve_llm_settings(
+        Settings(
+            llm_provider="anthropic",
+            llm_api_base="https://api.anthropic.com",
+            llm_model="claude-sonnet-4-20250514",
+            llm_api_key="sk-ant-test",
+        )
+    )
+    assert resolved.llm_model == "claude-sonnet-4-6"
 
 
 def test_openai_compatible_client_parses_chat_completions() -> None:
@@ -162,7 +174,7 @@ def test_anthropic_client_parses_messages_api() -> None:
         llm_provider="anthropic",
         llm_api_key="sk-ant-test",
         llm_api_base="https://api.anthropic.com",
-        llm_model="claude-sonnet-4-20250514",
+        llm_model="claude-sonnet-4-6",
     )
     client = AnthropicClient(settings)
     fake_resp = MagicMock()
