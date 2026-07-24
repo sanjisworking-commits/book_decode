@@ -12,6 +12,7 @@ Pipeline runs Phase 1 → 5, then Phase 6 validates schema + source refs (with r
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r backend/requirements.txt
+# Includes Docling (EPUB → structure). First install can take several minutes.
 cp .env.example .env
 ```
 
