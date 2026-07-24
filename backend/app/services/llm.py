@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from typing import Any, Protocol
 
 import httpx
@@ -58,6 +59,70 @@ def parse_json_content(content: str) -> dict[str, Any]:
     return data
 
 
+def _httpx_timeout(settings: Settings) -> httpx.Timeout:
+    read = max(30.0, float(settings.llm_timeout_seconds or 300.0))
+    return httpx.Timeout(connect=30.0, read=read, write=60.0, pool=30.0)
+
+
+def _post_json(
+    *,
+    settings: Settings,
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    error_prefix: str,
+) -> dict[str, Any]:
+    """POST JSON with timeout + retries for transient network/read timeouts."""
+    attempts = max(1, int(settings.llm_http_retries or 0) + 1)
+    timeout = _httpx_timeout(settings)
+    last_exc: Exception | None = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                resp = client.post(url, headers=headers, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                if not isinstance(data, dict):
+                    raise LLMError(f"{error_prefix}: response JSON root must be an object")
+                return data
+        except httpx.HTTPStatusError as exc:
+            detail = (exc.response.text or "")[:500]
+            raise LLMError(
+                f"{error_prefix} {exc.response.status_code}: {detail or exc}"
+            ) from exc
+        except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.WriteTimeout) as exc:
+            last_exc = exc
+            logger.warning(
+                "%s timeout attempt %s/%s (read=%ss): %s",
+                error_prefix,
+                attempt,
+                attempts,
+                timeout.read,
+                exc,
+            )
+            if attempt >= attempts:
+                break
+            time.sleep(min(2.0 * attempt, 8.0))
+        except httpx.HTTPError as exc:
+            last_exc = exc
+            logger.warning(
+                "%s HTTP error attempt %s/%s: %s",
+                error_prefix,
+                attempt,
+                attempts,
+                exc,
+            )
+            if attempt >= attempts:
+                break
+            time.sleep(min(2.0 * attempt, 8.0))
+
+    raise LLMError(
+        f"{error_prefix} timed out after {attempts} attempt(s) "
+        f"(LLM_TIMEOUT_SECONDS={timeout.read}). Last error: {last_exc}"
+    ) from last_exc
+
+
 class OpenAICompatibleClient:
     """OpenAI Chat Completions wire protocol (OpenAI, Groq, Together, Ollama, etc.)."""
 
@@ -88,18 +153,13 @@ class OpenAICompatibleClient:
             "Authorization": f"Bearer {self.settings.llm_api_key}",
             "Content-Type": "application/json",
         }
-        try:
-            with httpx.Client(timeout=120.0) as client:
-                resp = client.post(url, headers=headers, json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.HTTPStatusError as exc:
-            detail = (exc.response.text or "")[:500]
-            raise LLMError(
-                f"LLM HTTP {exc.response.status_code}: {detail or exc}"
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise LLMError(f"LLM HTTP error: {exc}") from exc
+        data = _post_json(
+            settings=self.settings,
+            url=url,
+            headers=headers,
+            payload=payload,
+            error_prefix="LLM HTTP",
+        )
 
         try:
             content = data["choices"][0]["message"]["content"]
@@ -140,18 +200,13 @@ class AnthropicClient:
             "anthropic-version": ANTHROPIC_VERSION,
             "Content-Type": "application/json",
         }
-        try:
-            with httpx.Client(timeout=120.0) as client:
-                resp = client.post(url, headers=headers, json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.HTTPStatusError as exc:
-            detail = (exc.response.text or "")[:500]
-            raise LLMError(
-                f"Anthropic HTTP {exc.response.status_code}: {detail or exc}"
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise LLMError(f"Anthropic HTTP error: {exc}") from exc
+        data = _post_json(
+            settings=self.settings,
+            url=url,
+            headers=headers,
+            payload=payload,
+            error_prefix="Anthropic HTTP",
+        )
 
         content = _anthropic_text_content(data)
         return parse_json_content(content)
