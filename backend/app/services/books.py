@@ -13,6 +13,7 @@ from app.domain.enums import (
 )
 from app.pipelines.extract import ExtractPipeline
 from app.pipelines.ingest import IngestPipeline
+from app.pipelines.synthesise import SynthesisePipeline
 from app.schemas.api_models import (
     BookMetadata,
     ChapterListResponse,
@@ -42,6 +43,7 @@ _IDLE_COMPLETE_STATUSES = {
     BookProcessingStatus.DETECTING_CHAPTERS.value,
     BookProcessingStatus.PREPARING_BLOCKS.value,
     BookProcessingStatus.ANALYSING_CHAPTERS.value,
+    BookProcessingStatus.CONSTRUCTING_SPINES.value,
 }
 
 
@@ -51,6 +53,7 @@ class BookService:
         self.fs = fs
         self.ingest = IngestPipeline(db, fs)
         self.extract = ExtractPipeline(db, fs)
+        self.synthesise = SynthesisePipeline(db, fs)
 
     def upload_epub(self, *, filename: str, data: bytes, max_size_bytes: int) -> BookMetadata:
         result = validate_epub_bytes(data, filename=filename, max_size_bytes=max_size_bytes)
@@ -113,7 +116,7 @@ class BookService:
         return self.get_status(book_id)
 
     def run_ingest_sync(self, book_id: str) -> None:
-        """Run Phase 1–3 pipeline (ingest → normalise/chunk → extract)."""
+        """Run Phase 1–4 pipeline (ingest → extract → synthesise)."""
         self.ingest.run(book_id)
         book = self.db.get_book(book_id)
         if not book:
@@ -123,6 +126,12 @@ class BookService:
         # Continue into Phase 3 when Phase 2 left book in preparing_blocks
         if book["processing_status"] == BookProcessingStatus.PREPARING_BLOCKS.value:
             self.extract.run(book_id)
+        book = self.db.get_book(book_id)
+        if not book or book["processing_status"] == BookProcessingStatus.FAILED.value:
+            return
+        # Continue into Phase 4 when Phase 3 left book in analysing_chapters
+        if book["processing_status"] == BookProcessingStatus.ANALYSING_CHAPTERS.value:
+            self.synthesise.run(book_id)
 
     def get_chapter_source(self, book_id: str, chapter_id: str) -> dict[str, Any]:
         book = self.db.get_book(book_id)
@@ -155,6 +164,10 @@ class BookService:
         book = self.db.get_book(book_id)
         if not book:
             raise KeyError(book_id)
+        # Prefer English synthesised spine when present
+        en_path = self.fs.chapter_spine_en_path(book_id, chapter_id)
+        if en_path.exists():
+            return self.fs.read_json(en_path)
         path = self.fs.chapter_spine_candidate_path(book_id, chapter_id)
         if not path.exists():
             raise FileNotFoundError(chapter_id)

@@ -2,11 +2,11 @@
 
 ## Current phase
 
-**Phase 3 — AI Argument Spine extraction**
+**Phase 4 — Chapter Argument Spine synthesis**
 
-Pipeline runs Phase 1 (Docling + chapters) → Phase 2 (canonical `book.json` + chunks) → Phase 3 (English spine extraction per chunk). Spec: [`docs/CANONICAL_BOOK_SCHEMA.md`](../docs/CANONICAL_BOOK_SCHEMA.md).
+Pipeline runs Phase 1 (Docling + chapters) → Phase 2 (canonical `book.json` + chunks) → Phase 3 (per-chunk extraction) → Phase 4 (multi-chunk synthesis into one English spine). Spec: [`docs/CANONICAL_BOOK_SCHEMA.md`](../docs/CANONICAL_BOOK_SCHEMA.md).
 
-Hindi-English adaptation and multi-chunk synthesis are later phases.
+Hindi-English adaptation is Phase 5.
 
 ## Setup
 
@@ -70,21 +70,21 @@ cd backend
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Health: `GET /health` → `{"phase":"3"}`
+Health: `GET /health` → `{"phase":"4"}`
 
 ## Endpoints
 
 | Method | Path | Purpose |
 |--------|------|---------|
 | POST | `/books/upload` | Upload EPUB |
-| POST | `/books/{id}/process` | Start Phase 1–3 pipeline (background) |
+| POST | `/books/{id}/process` | Start Phase 1–4 pipeline (background) |
 | GET | `/books/{id}/status` | Real processing status |
 | GET | `/books/{id}` | Book metadata |
 | GET | `/books/{id}/chapters` | Detected chapter list |
 | GET | `/books/{id}/canonical` | Canonical hierarchical `book.json` |
 | GET | `/books/{id}/chapters/{cid}/source` | Normalised source chapter JSON |
 | GET | `/books/{id}/chapters/{cid}/chunks` | Chunk plan for extraction |
-| GET | `/books/{id}/chapters/{cid}/spine` | English spine candidate (or `needs_synthesis` manifest) |
+| GET | `/books/{id}/chapters/{cid}/spine` | English chapter spine (post-synthesis) |
 | DELETE | `/books/{id}` | Delete book artefacts |
 | POST | `/demo/reset` | Clear local demo data |
 
@@ -92,12 +92,13 @@ Health: `GET /health` → `{"phase":"3"}`
 
 After process completes with mock or live LLM:
 
-- `processing_status` = `analysing_chapters`
+- `processing_status` = `constructing_spines`
 - `data/books/{book_id}/book.json` (canonical schema 2.0)
 - Per chapter:
   - `*.source.json` / `*.chunks.json`
   - `*.spine.partial.{chunk_id}.json`
-  - `*.spine.candidate.json` (full English spine if single chunk; synthesis manifest if multi-chunk)
+  - `*.spine.en.json` — synthesised English chapter spine
+  - `*.spine.candidate.json` — same English spine (API reads EN first)
 
 Block ID format: `{book_id}.{chapter_id}.{section_id}.blockNNN`
 
