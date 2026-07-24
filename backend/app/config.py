@@ -40,7 +40,8 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = "gpt-4o"
     llm_temperature: float = 0.2
-    llm_max_tokens: int = 8192
+    # Full-chapter Argument Spines often exceed 8k output tokens when truncated mid-JSON.
+    llm_max_tokens: int = 16384
     llm_mock: bool = False
     # Per-request HTTP timeout for LLM calls (large Argument Spine JSON can be slow).
     llm_timeout_seconds: float = 300.0

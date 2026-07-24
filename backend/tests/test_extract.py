@@ -31,6 +31,35 @@ def test_parse_json_content_strips_fences() -> None:
     assert data == {"a": 1}
 
 
+def test_parse_json_unterminated_string_hints_truncation() -> None:
+    with pytest.raises(LLMError, match="truncated|LLM_MAX_TOKENS"):
+        parse_json_content('{"statement_en": "this never ends')
+
+
+def test_anthropic_rejects_max_tokens_stop_reason() -> None:
+    settings = Settings(
+        llm_provider="anthropic",
+        llm_api_key="sk-ant-test",
+        llm_api_base="https://api.anthropic.com",
+        llm_model="claude-sonnet-4-6",
+        llm_max_tokens=8192,
+    )
+    client = AnthropicClient(settings)
+    fake_resp = MagicMock()
+    fake_resp.raise_for_status = MagicMock()
+    fake_resp.json.return_value = {
+        "stop_reason": "max_tokens",
+        "content": [{"type": "text", "text": '{"nodes": [{"statement_en": "cut off'}]"}],
+    }
+    fake_http = MagicMock()
+    fake_http.__enter__.return_value = fake_http
+    fake_http.post.return_value = fake_resp
+
+    with patch("app.services.llm.httpx.Client", return_value=fake_http):
+        with pytest.raises(LLMError, match="truncated at max_tokens"):
+            client.complete_json(system="sys", user="user")
+
+
 def test_mock_llm_returns_schema_shaped_spine() -> None:
     settings = Settings(llm_mock=True)
     client = MockLLMClient(settings)

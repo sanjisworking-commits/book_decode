@@ -53,10 +53,30 @@ def parse_json_content(content: str) -> dict[str, Any]:
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise LLMError(f"LLM returned invalid JSON: {exc}") from exc
+        hint = ""
+        if "Unterminated string" in str(exc) or "Expecting" in str(exc):
+            hint = (
+                " Response looks truncated — raise LLM_MAX_TOKENS "
+                f"(current response length {len(text)} chars) or use a smaller chapter/chunk."
+            )
+        raise LLMError(f"LLM returned invalid JSON: {exc}.{hint}") from exc
     if not isinstance(data, dict):
         raise LLMError("LLM JSON root must be an object")
     return data
+
+
+def _ensure_complete_generation(
+    *,
+    stop_reason: str | None,
+    finish_reason: str | None,
+    max_tokens: int,
+) -> None:
+    """Fail closed when the model stopped because the output budget was hit."""
+    if stop_reason == "max_tokens" or finish_reason == "length":
+        raise LLMError(
+            f"LLM output truncated at max_tokens={max_tokens}. "
+            "Increase LLM_MAX_TOKENS or reduce chapter/chunk size so the Argument Spine fits."
+        )
 
 
 def _httpx_timeout(settings: Settings) -> httpx.Timeout:
@@ -162,10 +182,17 @@ class OpenAICompatibleClient:
         )
 
         try:
-            content = data["choices"][0]["message"]["content"]
+            choice = data["choices"][0]
+            content = choice["message"]["content"]
+            finish_reason = choice.get("finish_reason")
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMError("Unexpected OpenAI-compatible response shape") from exc
 
+        _ensure_complete_generation(
+            stop_reason=None,
+            finish_reason=finish_reason if isinstance(finish_reason, str) else None,
+            max_tokens=self.settings.llm_max_tokens,
+        )
         return parse_json_content(content)
 
 
@@ -208,6 +235,12 @@ class AnthropicClient:
             error_prefix="Anthropic HTTP",
         )
 
+        stop_reason = data.get("stop_reason")
+        _ensure_complete_generation(
+            stop_reason=stop_reason if isinstance(stop_reason, str) else None,
+            finish_reason=None,
+            max_tokens=self.settings.llm_max_tokens,
+        )
         content = _anthropic_text_content(data)
         return parse_json_content(content)
 
