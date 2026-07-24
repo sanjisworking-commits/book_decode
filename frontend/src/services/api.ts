@@ -38,13 +38,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-export async function uploadBook(file: File): Promise<BookMetadata> {
+export async function uploadBook(
+  file: File,
+  timeoutMs = 60_000,
+): Promise<BookMetadata> {
   const form = new FormData();
   form.append("file", file);
-  return request<BookMetadata>("/books/upload", {
-    method: "POST",
-    body: form,
-  });
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await request<BookMetadata>("/books/upload", {
+      method: "POST",
+      body: form,
+      signal: ctrl.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function startProcessing(bookId: string): Promise<ProcessingStatus> {

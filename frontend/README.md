@@ -5,14 +5,26 @@ Vite + React + TypeScript UI for According to Logic / Book Decode.
 ## Run
 
 ```bash
-# terminal 1 — API (from repo root)
-cd backend && LLM_MOCK=true uvicorn app.main:app --reload --port 8000
+# terminal 1 — API (from repo root; use a free port)
+cd backend && uvicorn app.main:app --reload --port 8003
 
-# terminal 2 — UI
+# terminal 2 — UI (proxy defaults to :8003 via .env.development)
 cd frontend && npm install && npm run dev
 ```
 
-Open http://localhost:5173 — Vite proxies `/books`, `/demo`, `/health` to the API.
+Open http://localhost:5173 — Vite proxies `/books`, `/demo`, `/health` to the API
+(default proxy target **`http://127.0.0.1:8003`**, set in `frontend/.env.development`).
+
+If the upload screen spins forever, the proxy port does not match uvicorn. Align them:
+
+```bash
+# API
+cd backend && uvicorn app.main:app --reload --port 8003
+
+# UI (restart after changing .env.development)
+cd frontend && npm run dev
+curl -s http://localhost:5173/health   # should return JSON via proxy
+```
 
 ### Real Anthropic vs mock
 

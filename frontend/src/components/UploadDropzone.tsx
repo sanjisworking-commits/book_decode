@@ -31,6 +31,14 @@ const ERROR_COPY: Record<string, { title: string; body: string }> = {
     title: "This EPUB appears DRM-protected",
     body: "We can’t decode DRM-locked books. Export a DRM-free copy and try again.",
   },
+  upload_timeout: {
+    title: "Upload timed out",
+    body: "The API did not respond. Confirm uvicorn is running and VITE_API_PROXY_TARGET matches its port.",
+  },
+  upload_failed: {
+    title: "Upload failed",
+    body: "Could not upload this EPUB to the API.",
+  },
 };
 
 export function UploadDropzone({ state, onFile, onClearError, disabled }: Props) {

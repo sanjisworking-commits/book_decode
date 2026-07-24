@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { BrandHeader } from "../components/BrandHeader";
 import { ProcessingView } from "../components/ProcessingView";
 import { isBookReady, isTerminalBookStatus } from "../lib/constants";
-import { getStatus } from "../services/api";
+import { getStatus, startProcessing } from "../services/api";
 import type { ProcessingStatus } from "../types/api";
 import { ApiError } from "../types/api";
 
@@ -16,6 +16,7 @@ export function ProcessingPage() {
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
+    let kickstarted = false;
 
     async function tick() {
       try {
@@ -23,6 +24,16 @@ export function ProcessingPage() {
         if (cancelled) return;
         setStatus(next);
         setError(null);
+
+        if (!kickstarted && next.processing_status === "uploaded") {
+          kickstarted = true;
+          try {
+            await startProcessing(bookId);
+          } catch {
+            /* poll continues */
+          }
+        }
+
         if (!isTerminalBookStatus(next.processing_status)) {
           timer = window.setTimeout(tick, 1500);
         }
