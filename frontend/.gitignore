@@ -1,0 +1,11 @@
+# Ignore
+.DS_Store
+node_modules
+dist
+*.local
+.env
+.env.local
+.env.*.local
+!.env.example
+!.env.development
+coverage

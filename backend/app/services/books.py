@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
 from app.pipelines.adapt import AdaptPipeline
 from app.pipelines.extract import ExtractPipeline
 from app.pipelines.ingest import IngestPipeline
+from app.pipelines.llm_bind import log_llm_mode
 from app.pipelines.synthesise import SynthesisePipeline
 from app.pipelines.validate_persist import ValidatePersistPipeline
+from app.config import get_settings
 from app.domain.enums import (
     BOOK_STATUS_TO_UI_STAGE,
     UI_STAGE_ORDER,
@@ -29,6 +32,7 @@ from app.storage.filesystem import FilesystemStore
 from app.storage.sqlite_store import SqliteStore
 from app.utils.ids import new_book_id, utc_now_iso
 
+logger = logging.getLogger(__name__)
 
 _ACTIVE_STATUSES = {
     BookProcessingStatus.QUEUED.value,
@@ -52,6 +56,28 @@ _IDLE_COMPLETE_STATUSES = {
 }
 
 
+def _chapter_progress_label(chapter: dict[str, Any]) -> str | None:
+    """Build a short progress string from chapter preview (e.g. extract chunk N/M)."""
+    preview = chapter.get("preview") or {}
+    total = preview.get("extract_chunk_total")
+    index = preview.get("extract_chunk_index")
+    if (
+        chapter.get("status") == ChapterStatus.EXTRACTING.value
+        and isinstance(total, int)
+        and total > 0
+        and isinstance(index, int)
+        and index > 0
+    ):
+        return f"chunk {index}/{total}"
+    if chapter.get("status") == ChapterStatus.SYNTHESISING.value:
+        return "synthesising"
+    if chapter.get("status") == ChapterStatus.ADAPTING_HINGLISH.value:
+        return "adapting"
+    if chapter.get("status") == ChapterStatus.VALIDATING.value:
+        return "validating"
+    return None
+
+
 class BookService:
     def __init__(self, db: SqliteStore, fs: FilesystemStore) -> None:
         self.db = db
@@ -61,6 +87,16 @@ class BookService:
         self.synthesise = SynthesisePipeline(db, fs)
         self.adapt = AdaptPipeline(db, fs)
         self.validate_persist = ValidatePersistPipeline(db, fs)
+
+    def _refresh_llm_clients(self) -> None:
+        """Re-read .env / process env and rebind LLM clients before a pipeline run."""
+        get_settings.cache_clear()
+        settings = get_settings()
+        log_llm_mode(settings)
+        self.extract.reload_llm(settings)
+        self.synthesise.reload_llm(settings)
+        self.adapt.reload_llm(settings)
+        self.validate_persist.reload_llm(settings)
 
     def upload_epub(self, *, filename: str, data: bytes, max_size_bytes: int) -> BookMetadata:
         result = validate_epub_bytes(data, filename=filename, max_size_bytes=max_size_bytes)
@@ -123,35 +159,190 @@ class BookService:
         return self.get_status(book_id)
 
     def run_ingest_sync(self, book_id: str) -> None:
-        """Run Phase 1–6 pipeline (ingest → … → validate/persist)."""
+        """Run Phase 1–6: shared ingest, then extract→synth→adapt→validate per chapter.
+
+        Chapters complete in order so chapter 1 can be opened while later chapters
+        continue decoding.
+        """
+        self._refresh_llm_clients()
         self.ingest.run(book_id)
         book = self.db.get_book(book_id)
         if not book:
             return
         if book["processing_status"] == BookProcessingStatus.FAILED.value:
             return
-        if book["processing_status"] == BookProcessingStatus.PREPARING_BLOCKS.value:
-            self.extract.run(book_id)
-        book = self.db.get_book(book_id)
-        if not book or book["processing_status"] == BookProcessingStatus.FAILED.value:
+        if book["processing_status"] != BookProcessingStatus.PREPARING_BLOCKS.value:
             return
-        if book["processing_status"] == BookProcessingStatus.ANALYSING_CHAPTERS.value:
-            self.synthesise.run(book_id)
-        book = self.db.get_book(book_id)
-        if not book or book["processing_status"] == BookProcessingStatus.FAILED.value:
+
+        job_id = book.get("job_id")
+        chapters = self.db.list_chapters(book_id)
+        if not chapters:
+            self.validate_persist._fail_book(
+                book, job_id, "No chapters available after ingest."
+            )
             return
-        if book["processing_status"] == BookProcessingStatus.CONSTRUCTING_SPINES.value:
-            self.adapt.run(book_id)
-        book = self.db.get_book(book_id)
-        if not book or book["processing_status"] == BookProcessingStatus.FAILED.value:
-            return
-        if book["processing_status"] == BookProcessingStatus.CREATING_HINGLISH.value:
-            self.validate_persist.run(book_id)
+
+        self.db.update_book(
+            book_id,
+            chapter_count=len(chapters),
+            processed_chapter_count=0,
+            failed_chapter_count=0,
+        )
+
+        summaries: list[dict[str, Any]] = []
+        updated = list(chapters)
+
+        for index, ch in enumerate(list(updated)):
+            if ch.get("status") == ChapterStatus.FAILED.value:
+                summaries.append(
+                    {
+                        "chapter_id": ch["chapter_id"],
+                        "ok": False,
+                        "reason": "failed_before_decode",
+                    }
+                )
+                continue
+
+            chapter_id = ch["chapter_id"]
+            book = self.db.get_book(book_id) or book
+
+            # --- extract ---
+            self.db.update_book(
+                book_id,
+                processing_status=BookProcessingStatus.ANALYSING_CHAPTERS.value,
+                current_stage=UIStage.ANALYSING_CHAPTERS.value,
+                current_chapter_id=chapter_id,
+                job_id=job_id,
+            )
+            extract_result = self.extract.extract_chapter(book_id, ch, book=book)
+            ch = extract_result["chapter"]
+            updated = self._merge_chapter(book_id, chapter_id, ch)
+            if ch.get("status") == ChapterStatus.FAILED.value:
+                summaries.append(extract_result["summary"])
+                self._refresh_progress_counts(book_id, updated)
+                continue
+
+            # --- synthesise ---
+            self.db.update_book(
+                book_id,
+                processing_status=BookProcessingStatus.CONSTRUCTING_SPINES.value,
+                current_stage=UIStage.CONSTRUCTING_ARGUMENT_SPINES.value,
+                current_chapter_id=chapter_id,
+            )
+            synth_result = self.synthesise.synthesise_chapter(
+                book_id, ch, book=self.db.get_book(book_id) or book
+            )
+            ch = synth_result["chapter"]
+            updated = self._merge_chapter(book_id, chapter_id, ch)
+            if ch.get("status") == ChapterStatus.FAILED.value:
+                summaries.append(synth_result["summary"])
+                self._refresh_progress_counts(book_id, updated)
+                continue
+
+            # --- adapt ---
+            self.db.update_book(
+                book_id,
+                processing_status=BookProcessingStatus.CREATING_HINGLISH.value,
+                current_stage=UIStage.CREATING_HINDI_ENGLISH_VERSIONS.value,
+                current_chapter_id=chapter_id,
+            )
+            adapt_result = self.adapt.adapt_chapter(book_id, ch)
+            ch = adapt_result["chapter"]
+            updated = self._merge_chapter(book_id, chapter_id, ch)
+            if ch.get("status") == ChapterStatus.FAILED.value:
+                summaries.append(adapt_result["summary"])
+                self._refresh_progress_counts(book_id, updated)
+                continue
+
+            # --- validate / persist ---
+            self.db.update_book(
+                book_id,
+                processing_status=BookProcessingStatus.VALIDATING.value,
+                current_stage=UIStage.VALIDATING_OUTPUT.value,
+                current_chapter_id=chapter_id,
+            )
+            validate_result = self.validate_persist.validate_chapter(
+                book_id, chapter_id, chapter=ch
+            )
+            ch = validate_result["chapter"]
+            updated = self._merge_chapter(book_id, chapter_id, ch)
+            summaries.append(validate_result["summary"])
+            self._refresh_progress_counts(book_id, updated)
+
+            logger.info(
+                "Progressive chapter done book=%s chapter=%s index=%s/%s status=%s",
+                book_id,
+                chapter_id,
+                index + 1,
+                len(updated),
+                ch.get("status"),
+            )
+
+        book = self.db.get_book(book_id) or book
+        updated = self.db.list_chapters(book_id)
+        completed = sum(
+            1 for c in updated if c["status"] == ChapterStatus.COMPLETED.value
+        )
+        if completed == 0:
+            # Prefer a precise early-phase failure over a generic validation rollup.
+            extract_failures = [
+                c
+                for c in updated
+                if c.get("status") == ChapterStatus.FAILED.value
+                and ((c.get("error") or {}).get("code") == "extraction_failed")
+            ]
+            if extract_failures and len(extract_failures) == len(updated):
+                first_err = (extract_failures[0].get("error") or {}).get("message")
+                message = "All chapters failed Argument Spine extraction."
+                if first_err:
+                    message = f"{message} First error: {first_err}"
+                self.extract._fail(
+                    book,
+                    job_id,
+                    message,
+                    details={
+                        "chapter_errors": [
+                            {
+                                "chapter_id": c["chapter_id"],
+                                "message": ((c.get("error") or {}).get("message")),
+                            }
+                            for c in extract_failures[:12]
+                        ],
+                    },
+                )
+                return
+
+        self.validate_persist._finalise_book(book, job_id, updated, summaries)
+
+    def _merge_chapter(
+        self, book_id: str, chapter_id: str, chapter: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        chapters = self.db.list_chapters(book_id)
+        updated = [
+            chapter if c["chapter_id"] == chapter_id else c for c in chapters
+        ]
+        self.db.replace_chapters(book_id, updated)
+        return updated
+
+    def _refresh_progress_counts(
+        self, book_id: str, chapters: list[dict[str, Any]]
+    ) -> None:
+        completed = sum(
+            1 for c in chapters if c["status"] == ChapterStatus.COMPLETED.value
+        )
+        failed = sum(1 for c in chapters if c["status"] == ChapterStatus.FAILED.value)
+        self.db.update_book(
+            book_id,
+            processed_chapter_count=completed,
+            failed_chapter_count=failed,
+            chapter_count=len(chapters),
+        )
 
     def retry_chapter(
         self, book_id: str, chapter_id: str, *, force: bool = False
     ) -> ProcessingStatusResponse:
         """Re-queue validation/repair for a failed chapter (Phase 6)."""
+        self._refresh_llm_clients()
         book = self.db.get_book(book_id)
         if not book:
             raise KeyError(book_id)
@@ -303,6 +494,7 @@ class BookService:
                     status=c["status"],
                     retry_count=c.get("retry_count") or 0,
                     error=ErrorBody(**c["error"]) if c.get("error") else None,
+                    progress=_chapter_progress_label(c),
                 )
                 for c in chapters
             ],
@@ -324,6 +516,7 @@ class BookService:
                     status=c["status"],
                     retry_count=c.get("retry_count") or 0,
                     error=ErrorBody(**c["error"]) if c.get("error") else None,
+                    progress=_chapter_progress_label(c),
                 )
                 for c in chapters
             ],

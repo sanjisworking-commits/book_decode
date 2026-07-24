@@ -96,7 +96,6 @@ def store_pair(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         retry_backoff_seconds=0,
     )
     settings.ensure_directories()
-    monkeypatch.setattr("app.pipelines.validate_persist.get_settings", lambda: settings)
     monkeypatch.setattr("app.services.llm.get_llm_client", lambda s: __import__(
         "app.services.llm", fromlist=["MockLLMClient"]
     ).MockLLMClient(s))

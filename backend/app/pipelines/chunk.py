@@ -36,14 +36,18 @@ def _section_boundaries(blocks: list[dict[str, Any]]) -> list[int]:
 def chunk_source_chapter(
     source_chapter: dict[str, Any],
     *,
-    token_limit: int = 6000,
+    token_limit: int = 20000,
     overlap_blocks: int = 2,
 ) -> dict[str, Any]:
     """Create a chunk plan for one normalised chapter.
 
-    Priority: whole chapter → heading/section groups → paragraph packs →
-    hard token-limit splits. Chunks carry allow-listed block IDs only
-    (no new content IDs).
+    Priority for prototype speed:
+    1. Whole chapter if it fits under ``token_limit`` (one LLM extract call)
+    2. Otherwise pack by token budget into as few chunks as possible
+
+    Avoids one-chunk-per-section splitting, which turned modest chapters
+    (e.g. Life 3.0 ch1 at ~15k tokens with many headings) into dozens of
+    Anthropic calls.
     """
     chapter_id = source_chapter["chapter_id"]
     blocks: list[dict[str, Any]] = list(source_chapter.get("source_blocks") or [])
@@ -66,24 +70,11 @@ def chunk_source_chapter(
         chunk = _make_chunk(chapter_id, 0, blocks, strategy="single_chapter")
         return {**base, "chunks": [chunk], "strategy": "single_chapter"}
 
-    # Try section/heading groups first
-    bounds = _section_boundaries(blocks)
-    section_slices: list[list[dict[str, Any]]] = []
-    for i, start in enumerate(bounds):
-        end = bounds[i + 1] if i + 1 < len(bounds) else len(blocks)
-        section_slices.append(blocks[start:end])
-
-    # If every section fits, emit one chunk per section (with overlap)
-    if section_slices and all(sum(_block_tokens(b) for b in s) <= token_limit for s in section_slices):
-        chunks = _with_overlap(chapter_id, section_slices, overlap_blocks, strategy="section")
-        return {**base, "chunks": chunks, "strategy": "section"}
-
-    # Otherwise pack paragraphs with token budget; split sections that overflow
-    packed: list[list[dict[str, Any]]] = []
-    for section in section_slices or [blocks]:
-        packed.extend(_pack_by_token_limit(section, token_limit))
-
-    chunks = _with_overlap(chapter_id, packed, overlap_blocks, strategy="token_fallback")
+    # Pack paragraphs with token budget into the fewest chunks that fit.
+    packed = _pack_by_token_limit(blocks, token_limit)
+    chunks = _with_overlap(
+        chapter_id, packed, overlap_blocks, strategy="token_fallback"
+    )
     return {**base, "chunks": chunks, "strategy": "token_fallback"}
 
 

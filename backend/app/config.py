@@ -30,8 +30,8 @@ class Settings(BaseSettings):
 
     max_epub_size_mb: int = 50
 
-    # Phase 2 chunking
-    chunk_token_limit: int = 6000
+    # Phase 2 chunking — prototype default keeps typical chapters as one LLM call
+    chunk_token_limit: int = 20000
     chunk_overlap_blocks: int = 2
 
     # LLM (multi-provider)
@@ -40,8 +40,12 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = "gpt-4o"
     llm_temperature: float = 0.2
-    llm_max_tokens: int = 8192
+    # Full-chapter Argument Spines often exceed 8k output tokens when truncated mid-JSON.
+    llm_max_tokens: int = 16384
     llm_mock: bool = False
+    # Per-request HTTP timeout for LLM calls (large Argument Spine JSON can be slow).
+    llm_timeout_seconds: float = 300.0
+    llm_http_retries: int = 2
 
     # Phase 6 validation / retries
     max_chapter_retries: int = 3
