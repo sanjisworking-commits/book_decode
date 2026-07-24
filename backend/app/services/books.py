@@ -34,7 +34,6 @@ from app.utils.ids import new_book_id, utc_now_iso
 
 logger = logging.getLogger(__name__)
 
-
 _ACTIVE_STATUSES = {
     BookProcessingStatus.QUEUED.value,
     BookProcessingStatus.READING_STRUCTURE.value,
@@ -55,6 +54,28 @@ _IDLE_COMPLETE_STATUSES = {
     BookProcessingStatus.CREATING_HINGLISH.value,
     BookProcessingStatus.VALIDATING.value,
 }
+
+
+def _chapter_progress_label(chapter: dict[str, Any]) -> str | None:
+    """Build a short progress string from chapter preview (e.g. extract chunk N/M)."""
+    preview = chapter.get("preview") or {}
+    total = preview.get("extract_chunk_total")
+    index = preview.get("extract_chunk_index")
+    if (
+        chapter.get("status") == ChapterStatus.EXTRACTING.value
+        and isinstance(total, int)
+        and total > 0
+        and isinstance(index, int)
+        and index > 0
+    ):
+        return f"chunk {index}/{total}"
+    if chapter.get("status") == ChapterStatus.SYNTHESISING.value:
+        return "synthesising"
+    if chapter.get("status") == ChapterStatus.ADAPTING_HINGLISH.value:
+        return "adapting"
+    if chapter.get("status") == ChapterStatus.VALIDATING.value:
+        return "validating"
+    return None
 
 
 class BookService:
@@ -473,6 +494,7 @@ class BookService:
                     status=c["status"],
                     retry_count=c.get("retry_count") or 0,
                     error=ErrorBody(**c["error"]) if c.get("error") else None,
+                    progress=_chapter_progress_label(c),
                 )
                 for c in chapters
             ],
@@ -494,6 +516,7 @@ class BookService:
                     status=c["status"],
                     retry_count=c.get("retry_count") or 0,
                     error=ErrorBody(**c["error"]) if c.get("error") else None,
+                    progress=_chapter_progress_label(c),
                 )
                 for c in chapters
             ],

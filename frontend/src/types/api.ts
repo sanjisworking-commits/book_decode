@@ -51,6 +51,8 @@ export type ChapterSummary = {
   status: string;
   retry_count: number;
   error: ApiErrorBody | null;
+  /** Mid-phase progress, e.g. "chunk 3/26" while extracting. */
+  progress?: string | null;
 };
 
 export type ProcessingStatus = {

@@ -177,14 +177,42 @@ class ExtractPipeline:
                 **chapter,
                 "status": ChapterStatus.EXTRACTING.value,
                 "error": None,
+                "preview": {
+                    **(chapter.get("preview") or {}),
+                    "extract_chunk_index": 0,
+                    "extract_chunk_total": len(chunks),
+                },
             }
             if persist_status:
                 self._patch_chapter(book_id, chapter_id, ch_working)
 
             partials: list[dict[str, Any]] = []
 
-            for chunk in chunks:
+            for i, chunk in enumerate(chunks):
                 chunk_id = chunk["chunk_id"]
+                ch_working = {
+                    **ch_working,
+                    "preview": {
+                        **(ch_working.get("preview") or {}),
+                        "extract_chunk_index": i + 1,
+                        "extract_chunk_total": len(chunks),
+                        "extract_chunk_id": chunk_id,
+                    },
+                }
+                if persist_status:
+                    self._patch_chapter(book_id, chapter_id, ch_working)
+                    # Touch book so status.updated_at moves and clients see activity.
+                    self.db.update_book(book_id, current_chapter_id=chapter_id)
+
+                logger.info(
+                    "Extracting chunk %s/%s chapter=%s book=%s chunk_id=%s",
+                    i + 1,
+                    len(chunks),
+                    chapter_id,
+                    book_id,
+                    chunk_id,
+                )
+
                 allow_ids = list(chunk.get("block_ids") or [])
                 chunk_blocks = [
                     {

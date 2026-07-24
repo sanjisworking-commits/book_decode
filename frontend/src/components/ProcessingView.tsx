@@ -62,6 +62,12 @@ export function ProcessingView({ status }: Props) {
               ? `${readyCount} of ${status.chapter_count || "?"} chapters ready — you can open the first while the rest keep decoding.`
               : `Stage ${status.stage_index} of ${status.stages_total} · ${status.processed_chapter_count}/${status.chapter_count || "?"} chapters ready`}
       </p>
+      {!failed && !done && status.processing_status === "analysing_chapters" && (
+        <p className="muted" style={{ margin: "-12px 0 24px", fontSize: 13, lineHeight: 1.45 }}>
+          Long chapters are split into many LLM calls — progress updates as each chunk finishes.
+          This can take several minutes.
+        </p>
+      )}
 
       {!failed && (
         <div style={{ marginBottom: 28 }}>
@@ -195,6 +201,7 @@ function ChapterGrid({
                     style={{ background: tone.color }}
                   />
                   {tone.label}
+                  {ch.progress ? ` · ${ch.progress}` : ""}
                 </span>
               </div>
               <div
