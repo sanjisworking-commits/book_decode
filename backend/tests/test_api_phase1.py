@@ -10,7 +10,14 @@ from fastapi.testclient import TestClient
 def test_health(client: TestClient) -> None:
     res = client.get("/health")
     assert res.status_code == 200
-    assert res.json()["phase"] == "6"
+    body = res.json()
+    assert body["phase"] == "6"
+    assert "llm_mock" in body
+    assert "llm_provider" in body
+    assert "llm_api_key_configured" in body
+    # conftest forces LLM_MOCK for API tests
+    assert body["llm_mock"] is True
+    assert body["llm_provider"] == "mock"
 
 
 def test_upload_rejects_bad_extension(client: TestClient, mini_epub_bytes: bytes) -> None:

@@ -8,8 +8,10 @@ from typing import Any
 from app.pipelines.adapt import AdaptPipeline
 from app.pipelines.extract import ExtractPipeline
 from app.pipelines.ingest import IngestPipeline
+from app.pipelines.llm_bind import log_llm_mode
 from app.pipelines.synthesise import SynthesisePipeline
 from app.pipelines.validate_persist import ValidatePersistPipeline
+from app.config import get_settings
 from app.domain.enums import (
     BOOK_STATUS_TO_UI_STAGE,
     UI_STAGE_ORDER,
@@ -61,6 +63,16 @@ class BookService:
         self.synthesise = SynthesisePipeline(db, fs)
         self.adapt = AdaptPipeline(db, fs)
         self.validate_persist = ValidatePersistPipeline(db, fs)
+
+    def _refresh_llm_clients(self) -> None:
+        """Re-read .env / process env and rebind LLM clients before a pipeline run."""
+        get_settings.cache_clear()
+        settings = get_settings()
+        log_llm_mode(settings)
+        self.extract.reload_llm(settings)
+        self.synthesise.reload_llm(settings)
+        self.adapt.reload_llm(settings)
+        self.validate_persist.reload_llm(settings)
 
     def upload_epub(self, *, filename: str, data: bytes, max_size_bytes: int) -> BookMetadata:
         result = validate_epub_bytes(data, filename=filename, max_size_bytes=max_size_bytes)
@@ -124,6 +136,7 @@ class BookService:
 
     def run_ingest_sync(self, book_id: str) -> None:
         """Run Phase 1–6 pipeline (ingest → … → validate/persist)."""
+        self._refresh_llm_clients()
         self.ingest.run(book_id)
         book = self.db.get_book(book_id)
         if not book:
@@ -152,6 +165,7 @@ class BookService:
         self, book_id: str, chapter_id: str, *, force: bool = False
     ) -> ProcessingStatusResponse:
         """Re-queue validation/repair for a failed chapter (Phase 6)."""
+        self._refresh_llm_clients()
         book = self.db.get_book(book_id)
         if not book:
             raise KeyError(book_id)

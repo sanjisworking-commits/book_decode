@@ -7,16 +7,17 @@ import logging
 import time
 from typing import Any
 
-from app.config import Settings, get_settings
+from app.config import Settings
 from app.domain.enums import BookProcessingStatus, ChapterStatus, UIStage
 from app.pipelines.align_spine import check_bilingual_alignment
+from app.pipelines.llm_bind import bind_llm
 from app.pipelines.validate_spine import (
     strip_invalid_source_refs,
     validate_source_refs,
     validate_spine_schema,
 )
 from app.prompts.loader import load_prompt
-from app.services.llm import LLMError, get_llm_client, resolve_llm_settings
+from app.services.llm import LLMError
 from app.storage.filesystem import FilesystemStore
 from app.storage.sqlite_store import SqliteStore
 from app.utils.ids import utc_now_iso
@@ -32,9 +33,12 @@ class ValidatePersistPipeline:
     ) -> None:
         self.db = db
         self.fs = fs
-        raw = settings or get_settings()
-        self.settings = resolve_llm_settings(raw) if not raw.llm_mock else raw
-        self.llm = get_llm_client(raw)
+        self.settings, self.llm = bind_llm(settings)
+        self.max_retries = max(0, int(self.settings.max_chapter_retries))
+        self.backoff = float(self.settings.retry_backoff_seconds)
+
+    def reload_llm(self, settings: Settings | None = None) -> None:
+        self.settings, self.llm = bind_llm(settings)
         self.max_retries = max(0, int(self.settings.max_chapter_retries))
         self.backoff = float(self.settings.retry_backoff_seconds)
 

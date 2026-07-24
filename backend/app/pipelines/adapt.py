@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any
 
-from app.config import Settings, get_settings
+from app.config import Settings
 from app.domain.enums import BookProcessingStatus, ChapterStatus, UIStage
 from app.pipelines.align_spine import (
     apply_hinglish_fields,
@@ -14,9 +14,10 @@ from app.pipelines.align_spine import (
     fill_missing_hinglish,
     mock_adapt_spine,
 )
+from app.pipelines.llm_bind import bind_llm
 from app.pipelines.validate_spine import validate_spine_schema
 from app.prompts.loader import load_prompt
-from app.services.llm import LLMError, get_llm_client, resolve_llm_settings
+from app.services.llm import LLMError
 from app.storage.filesystem import FilesystemStore
 from app.storage.sqlite_store import SqliteStore
 from app.utils.ids import utc_now_iso
@@ -30,9 +31,10 @@ class AdaptPipeline:
     ) -> None:
         self.db = db
         self.fs = fs
-        raw = settings or get_settings()
-        self.settings = resolve_llm_settings(raw) if not raw.llm_mock else raw
-        self.llm = get_llm_client(raw)
+        self.settings, self.llm = bind_llm(settings)
+
+    def reload_llm(self, settings: Settings | None = None) -> None:
+        self.settings, self.llm = bind_llm(settings)
 
     def run(self, book_id: str) -> None:
         book = self.db.get_book(book_id)
