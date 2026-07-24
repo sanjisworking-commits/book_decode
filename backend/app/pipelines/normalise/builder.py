@@ -86,7 +86,10 @@ class _BookBuilder:
         self.part_ordinal = 0
         self.chapter_ordinal = 0
         self.section_ordinal = 0
+        # Chapter-local block counter (reset on each chapter). Front matter uses
+        # front_block_ordinal so IDs never collide if body content is mis-routed.
         self.block_ordinal = 0
+        self.front_block_ordinal = 0
         self.chapter_order_index = 0
         self.book_order_index = 0
 
@@ -350,6 +353,61 @@ class _BookBuilder:
         self.current_chapter = None
         self.current_section = None
 
+    def _open_holding_chapter(
+        self,
+        *,
+        title: str,
+        source_ref: str | None,
+        heading_path: list[str],
+    ) -> None:
+        """Chapter placeholder for content between a Part heading and the next Chapter."""
+        self.chapter_ordinal += 1
+        part_id = self.current_part["part_id"] if self.current_part else None
+        if part_id:
+            chapter_id = f"{part_id}-intro"
+        else:
+            chapter_id = f"ch-intro-{self.chapter_ordinal:02d}"
+        existing = {c["chapter_id"] for c in self.chapters}
+        base = chapter_id
+        suffix = 2
+        while chapter_id in existing:
+            chapter_id = f"{base}-{suffix}"
+            suffix += 1
+
+        path = list(heading_path) if heading_path else (
+            [self.current_part["title"], title] if self.current_part else [title]
+        )
+        chapter: Chapter = {
+            "chapter_id": chapter_id,
+            "title": title,
+            "chapter_number": None,
+            "part_id": part_id,
+            "order_index": len(self.chapters),
+            "source_ref": source_ref,
+            "heading_path": path,
+            "sections": [],
+            "blocks": [],
+        }
+        self.chapters.append(chapter)
+        self.current_chapter = chapter
+        self.section_ordinal = 0
+        self.block_ordinal = 0
+        self.chapter_order_index = 0
+
+        self.section_ordinal += 1
+        section_id = make_section_id(self.section_ordinal)
+        section: Section = {
+            "section_id": section_id,
+            "title": title,
+            "heading_level": 1,
+            "heading_path": path,
+            "order_index": 0,
+            "source_ref": source_ref,
+            "blocks": [],
+        }
+        chapter["sections"].append(section)
+        self.current_section = section
+
     def _flush_list(self) -> None:
         if not self._pending_list_items:
             return
@@ -447,27 +505,41 @@ class _BookBuilder:
             meta.update(extra_meta)
 
         if self.current_chapter is None:
-            # Front matter
-            self.block_ordinal += 1
-            block_id = make_front_block_id(self.book_id, self.block_ordinal)
-            block: Block = {
-                "block_id": block_id,
-                "block_type": block_type,
-                "text": text,
-                "book_id": self.book_id,
-                "chapter_id": None,
-                "section_id": "sec00",
-                "part_id": self.current_part["part_id"] if self.current_part else None,
-                "heading_path": path,
-                "source_ref": source_ref,
-                "docling_index": docling_index,
-                "order_index": len(self.front_blocks),
-                "book_order_index": self.book_order_index,
-                "metadata": meta,
-            }
-            self.book_order_index += 1
-            self.front_blocks.append(block)
-            return
+            # After the first real chapter, never append to front_matter again.
+            # Part headings close the prior chapter; content until the next
+            # "Chapter N" must land in a holding chapter (fixes duplicate
+            # front.sec00.blockNNN IDs when block_ordinal was reset).
+            if self.chapters:
+                self._open_holding_chapter(
+                    title=(
+                        self.current_part["title"]
+                        if self.current_part
+                        else "Interstitial"
+                    ),
+                    source_ref=source_ref,
+                    heading_path=path,
+                )
+            else:
+                self.front_block_ordinal += 1
+                block_id = make_front_block_id(self.book_id, self.front_block_ordinal)
+                block: Block = {
+                    "block_id": block_id,
+                    "block_type": block_type,
+                    "text": text,
+                    "book_id": self.book_id,
+                    "chapter_id": None,
+                    "section_id": "sec00",
+                    "part_id": self.current_part["part_id"] if self.current_part else None,
+                    "heading_path": path,
+                    "source_ref": source_ref,
+                    "docling_index": docling_index,
+                    "order_index": len(self.front_blocks),
+                    "book_order_index": self.book_order_index,
+                    "metadata": meta,
+                }
+                self.book_order_index += 1
+                self.front_blocks.append(block)
+                return
 
         if self.current_section is None:
             # Ensure a default section exists
