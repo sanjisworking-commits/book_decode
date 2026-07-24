@@ -83,12 +83,29 @@ describe("ProcessingView", () => {
         status={{
           ...base,
           processing_status: "failed",
-          chapters: [],
-          error: { code: "structure_unreadable", message: "Bad structure" },
+          chapters: [
+            {
+              chapter_id: "ch01",
+              title: "One",
+              chapter_number: 1,
+              status: "failed",
+              retry_count: 0,
+              error: {
+                code: "extraction_failed",
+                message: "Anthropic HTTP 401: invalid x-api-key",
+              },
+            },
+          ],
+          error: {
+            code: "extraction_failed",
+            message:
+              "All chapters failed Argument Spine extraction. First error: Anthropic HTTP 401: invalid x-api-key",
+          },
         }}
       />,
     );
     expect(screen.getByText(/Couldn’t decode this book/i)).toBeInTheDocument();
-    expect(screen.getByText(/structure_unreadable/i)).toBeInTheDocument();
+    expect(screen.getByText(/extraction_failed/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Anthropic HTTP 401/i).length).toBeGreaterThan(0);
   });
 });

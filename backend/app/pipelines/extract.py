@@ -69,7 +69,32 @@ class ExtractPipeline:
         failed = sum(1 for c in updated if c["status"] == ChapterStatus.FAILED.value)
         ok = len(updated) - failed
         if ok == 0:
-            self._fail(book, job_id, "All chapters failed Argument Spine extraction.")
+            first_err = next(
+                (
+                    (c.get("error") or {}).get("message")
+                    for c in updated
+                    if (c.get("error") or {}).get("message")
+                ),
+                None,
+            )
+            message = "All chapters failed Argument Spine extraction."
+            if first_err:
+                message = f"{message} First error: {first_err}"
+            self._fail(
+                book,
+                job_id,
+                message,
+                details={
+                    "chapter_errors": [
+                        {
+                            "chapter_id": c["chapter_id"],
+                            "message": ((c.get("error") or {}).get("message")),
+                        }
+                        for c in updated
+                        if c.get("status") == ChapterStatus.FAILED.value
+                    ][:12],
+                },
+            )
             return
 
         # Phase 3 idle-complete at analysing_chapters
@@ -288,9 +313,20 @@ class ExtractPipeline:
             [chapter if c["chapter_id"] == chapter_id else c for c in chapters],
         )
 
-    def _fail(self, book: dict[str, Any], job_id: str | None, message: str) -> None:
+    def _fail(
+        self,
+        book: dict[str, Any],
+        job_id: str | None,
+        message: str,
+        *,
+        details: dict[str, Any] | None = None,
+    ) -> None:
         book_id = book["book_id"]
-        error = {"code": "extraction_failed", "message": message, "details": None}
+        error = {
+            "code": "extraction_failed",
+            "message": message,
+            "details": details,
+        }
         self.db.update_book(
             book_id,
             processing_status=BookProcessingStatus.FAILED.value,

@@ -86,6 +86,11 @@ class OpenAICompatibleClient:
                 resp = client.post(url, headers=headers, json=payload)
                 resp.raise_for_status()
                 data = resp.json()
+        except httpx.HTTPStatusError as exc:
+            detail = (exc.response.text or "")[:500]
+            raise LLMError(
+                f"LLM HTTP {exc.response.status_code}: {detail or exc}"
+            ) from exc
         except httpx.HTTPError as exc:
             raise LLMError(f"LLM HTTP error: {exc}") from exc
 
@@ -133,6 +138,11 @@ class AnthropicClient:
                 resp = client.post(url, headers=headers, json=payload)
                 resp.raise_for_status()
                 data = resp.json()
+        except httpx.HTTPStatusError as exc:
+            detail = (exc.response.text or "")[:500]
+            raise LLMError(
+                f"Anthropic HTTP {exc.response.status_code}: {detail or exc}"
+            ) from exc
         except httpx.HTTPError as exc:
             raise LLMError(f"Anthropic HTTP error: {exc}") from exc
 

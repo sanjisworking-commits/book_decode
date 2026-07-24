@@ -25,7 +25,7 @@ def bind_llm(
     else:
         raw = settings
     resolved = resolve_llm_settings(raw) if not raw.llm_mock else raw
-    client = get_llm_client(raw)
+    client = get_llm_client(resolved if not raw.llm_mock else raw)
     return resolved, client
 
 
@@ -36,9 +36,10 @@ def log_llm_mode(settings: Settings) -> None:
             "Unset LLM_MOCK in the shell and set LLM_MOCK=false in .env to use Anthropic/OpenAI."
         )
     else:
+        resolved = resolve_llm_settings(settings)
         logger.info(
             "LLM client ready provider=%s model=%s api_key_configured=%s",
-            settings.llm_provider,
-            settings.llm_model,
-            bool(settings.llm_api_key),
+            resolved.llm_provider,
+            resolved.llm_model,
+            bool(resolved.llm_api_key),
         )

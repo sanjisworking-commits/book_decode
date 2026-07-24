@@ -259,6 +259,38 @@ class BookService:
 
         book = self.db.get_book(book_id) or book
         updated = self.db.list_chapters(book_id)
+        completed = sum(
+            1 for c in updated if c["status"] == ChapterStatus.COMPLETED.value
+        )
+        if completed == 0:
+            # Prefer a precise early-phase failure over a generic validation rollup.
+            extract_failures = [
+                c
+                for c in updated
+                if c.get("status") == ChapterStatus.FAILED.value
+                and ((c.get("error") or {}).get("code") == "extraction_failed")
+            ]
+            if extract_failures and len(extract_failures) == len(updated):
+                first_err = (extract_failures[0].get("error") or {}).get("message")
+                message = "All chapters failed Argument Spine extraction."
+                if first_err:
+                    message = f"{message} First error: {first_err}"
+                self.extract._fail(
+                    book,
+                    job_id,
+                    message,
+                    details={
+                        "chapter_errors": [
+                            {
+                                "chapter_id": c["chapter_id"],
+                                "message": ((c.get("error") or {}).get("message")),
+                            }
+                            for c in extract_failures[:12]
+                        ],
+                    },
+                )
+                return
+
         self.validate_persist._finalise_book(book, job_id, updated, summaries)
 
     def _merge_chapter(

@@ -118,13 +118,15 @@ export function ProcessingView({ status }: Props) {
             borderRadius: 7,
             padding: "8px 12px",
             marginBottom: 20,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
           }}
         >
           failed at stage {status.stage_index} / {status.stages_total} · error: {status.error.code}
         </div>
       )}
 
-      {status.chapters.length > 0 && !failed && (
+      {status.chapters.length > 0 && (
         <ChapterGrid chapters={status.chapters} currentId={status.current_chapter_id} />
       )}
     </div>
@@ -207,6 +209,24 @@ function ChapterGrid({
               >
                 {ch.title || ch.chapter_id}
               </div>
+              {ch.status === "failed" && ch.error?.message && (
+                <div
+                  className="mono"
+                  style={{
+                    marginTop: 8,
+                    fontSize: 11,
+                    color: "#934231",
+                    lineHeight: 1.35,
+                    display: "-webkit-box",
+                    WebkitLineClamp: 3,
+                    WebkitBoxOrient: "vertical",
+                    overflow: "hidden",
+                  }}
+                  title={ch.error.message}
+                >
+                  {ch.error.message}
+                </div>
+              )}
             </div>
           );
         })}

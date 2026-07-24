@@ -41,13 +41,16 @@ app.include_router(demo_router)
 @app.get("/health")
 async def health() -> dict[str, object]:
     """Liveness + LLM mode diagnostics (no secrets)."""
+    from app.services.llm import resolve_llm_settings
+
     get_settings.cache_clear()
-    s = get_settings()
+    raw = get_settings()
+    s = resolve_llm_settings(raw) if not raw.llm_mock else raw
     return {
         "status": "ok",
         "phase": "6",
-        "llm_mock": s.llm_mock,
-        "llm_provider": "mock" if s.llm_mock else s.llm_provider,
-        "llm_model": "mock" if s.llm_mock else s.llm_model,
-        "llm_api_key_configured": bool(s.llm_api_key and s.llm_api_key.strip()),
+        "llm_mock": raw.llm_mock,
+        "llm_provider": "mock" if raw.llm_mock else s.llm_provider,
+        "llm_model": "mock" if raw.llm_mock else s.llm_model,
+        "llm_api_key_configured": bool(raw.llm_api_key and raw.llm_api_key.strip()),
     }
