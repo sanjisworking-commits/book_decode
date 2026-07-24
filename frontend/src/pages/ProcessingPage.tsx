@@ -7,21 +7,45 @@ import { getStatus, startProcessing } from "../services/api";
 import type { ProcessingStatus } from "../types/api";
 import { ApiError } from "../types/api";
 
+function formatElapsed(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  if (m <= 0) return `${s}s`;
+  return `${m}m ${s.toString().padStart(2, "0")}s`;
+}
+
 export function ProcessingPage() {
   const { bookId = "" } = useParams();
   const navigate = useNavigate();
   const [status, setStatus] = useState<ProcessingStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const [sinceStatusChangeSec, setSinceStatusChangeSec] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
     let kickstarted = false;
+    let lastFingerprint = "";
 
     async function tick() {
       try {
         const next = await getStatus(bookId);
         if (cancelled) return;
+        const fingerprint = [
+          next.processing_status,
+          next.current_stage,
+          next.processed_chapter_count,
+          next.current_chapter_id,
+          next.chapters
+            .map((c) => `${c.chapter_id}:${c.status}:${c.progress ?? ""}`)
+            .join("|"),
+          next.updated_at ?? "",
+        ].join("::");
+        if (fingerprint !== lastFingerprint) {
+          lastFingerprint = fingerprint;
+          setSinceStatusChangeSec(0);
+        }
         setStatus(next);
         setError(null);
 
@@ -57,6 +81,20 @@ export function ProcessingPage() {
     };
   }, [bookId]);
 
+  useEffect(() => {
+    if (!status || isTerminalBookStatus(status.processing_status)) return;
+    const id = window.setInterval(() => {
+      setElapsedSec((n) => n + 1);
+      setSinceStatusChangeSec((n) => n + 1);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [status?.processing_status, status?.book_id]);
+
+  useEffect(() => {
+    setElapsedSec(0);
+    setSinceStatusChangeSec(0);
+  }, [bookId]);
+
   const ready = status ? isBookReady(status.processing_status) : false;
   const failed = status?.processing_status === "failed";
   const firstReady = status?.chapters.find((c) => isChapterReady(c.status));
@@ -81,7 +119,20 @@ export function ProcessingPage() {
         </div>
       )}
 
-      {status && <ProcessingView status={status} />}
+      {status && (
+        <ProcessingView
+          status={status}
+          elapsedLabel={stillProcessing ? formatElapsed(elapsedSec) : undefined}
+          waitingOnLlm={
+            stillProcessing &&
+            sinceStatusChangeSec >= 8 &&
+            (status.processing_status === "analysing_chapters" ||
+              status.processing_status === "constructing_spines" ||
+              status.processing_status === "creating_hinglish" ||
+              status.processing_status === "validating")
+          }
+        />
+      )}
 
       <div style={{ marginTop: 20, display: "flex", gap: 12, flexWrap: "wrap" }}>
         {canOpenEarly && firstReady && (

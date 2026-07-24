@@ -3,6 +3,8 @@ import type { ChapterSummary, ProcessingStatus } from "../types/api";
 
 type Props = {
   status: ProcessingStatus;
+  elapsedLabel?: string;
+  waitingOnLlm?: boolean;
 };
 
 function stageState(
@@ -31,18 +33,20 @@ function chapterTone(status: string): { label: string; color: string } {
   return { label: "Pending", color: "var(--bd-faint)" };
 }
 
-export function ProcessingView({ status }: Props) {
+export function ProcessingView({ status, elapsedLabel, waitingOnLlm }: Props) {
   const done = status.processing_status === "completed" ||
     status.processing_status === "completed_with_errors";
   const failed = status.processing_status === "failed";
   const currentIndex = Math.max(0, Math.min(status.stage_index - 1, UI_STAGES.length - 1));
   const readyCount = status.chapters.filter((c) => c.status === "completed").length;
   const progressive = !done && !failed && readyCount > 0;
+  const activeChapter = status.chapters.find((c) => c.chapter_id === status.current_chapter_id);
 
   return (
     <div className="surface" style={{ padding: "28px 28px 24px" }}>
       <div className="eyebrow" style={{ marginBottom: 8 }}>
         Decoding
+        {elapsedLabel ? ` · ${elapsedLabel}` : ""}
       </div>
       <h1 style={{ fontSize: 28, fontWeight: 600, letterSpacing: "-0.02em", margin: "0 0 8px" }}>
         {failed
@@ -51,7 +55,9 @@ export function ProcessingView({ status }: Props) {
             ? "Book ready"
             : progressive
               ? "First chapters ready"
-              : "Working through your book"}
+              : waitingOnLlm
+                ? "Waiting on the model…"
+                : "Working through your book"}
       </h1>
       <p className="muted" style={{ margin: "0 0 24px", lineHeight: 1.5 }}>
         {failed
@@ -62,10 +68,18 @@ export function ProcessingView({ status }: Props) {
               ? `${readyCount} of ${status.chapter_count || "?"} chapters ready — you can open the first while the rest keep decoding.`
               : `Stage ${status.stage_index} of ${status.stages_total} · ${status.processed_chapter_count}/${status.chapter_count || "?"} chapters ready`}
       </p>
-      {!failed && !done && status.processing_status === "analysing_chapters" && (
+      {!failed && !done && waitingOnLlm && (
         <p className="muted" style={{ margin: "-12px 0 24px", fontSize: 13, lineHeight: 1.45 }}>
-          Long chapters are split into many LLM calls — progress updates as each chunk finishes.
-          This can take several minutes.
+          {activeChapter?.progress
+            ? `Anthropic is generating the Argument Spine (${activeChapter.progress}). `
+            : "Anthropic is generating the Argument Spine. "}
+          A single chapter call can take 1–5 minutes. If your uvicorn log shows
+          “Extracting chunk …”, it is still working — not frozen.
+        </p>
+      )}
+      {!failed && !done && !waitingOnLlm && status.processing_status === "analysing_chapters" && (
+        <p className="muted" style={{ margin: "-12px 0 24px", fontSize: 13, lineHeight: 1.45 }}>
+          Extracting Argument Spine from chapter text via the LLM.
         </p>
       )}
 

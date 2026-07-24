@@ -48,19 +48,32 @@ describe("ProcessingView", () => {
     expect(screen.getByText("Two")).toBeInTheDocument();
   });
 
-  it("shows working copy before any chapter completes", () => {
+  it("shows waiting-on-model copy when LLM call is in flight", () => {
     render(
       <ProcessingView
         status={{
           ...base,
           processed_chapter_count: 0,
-          chapters: base.chapters.map((c) =>
-            c.chapter_id === "ch01" ? { ...c, status: "extracting" } : c,
-          ),
+          current_chapter_id: "ch01",
+          chapters: [
+            {
+              chapter_id: "ch01",
+              title: "One",
+              chapter_number: 1,
+              status: "extracting",
+              retry_count: 0,
+              error: null,
+              progress: "chunk 1/1",
+            },
+          ],
         }}
+        elapsedLabel="1m 12s"
+        waitingOnLlm
       />,
     );
-    expect(screen.getByText(/Working through your book/i)).toBeInTheDocument();
+    expect(screen.getByText(/Waiting on the model/i)).toBeInTheDocument();
+    expect(screen.getByText(/chunk 1\/1/i)).toBeInTheDocument();
+    expect(screen.getByText(/Decoding · 1m 12s/i)).toBeInTheDocument();
   });
 
   it("shows book ready heading when completed", () => {
