@@ -82,6 +82,7 @@ class BookService:
     def __init__(self, db: SqliteStore, fs: FilesystemStore) -> None:
         self.db = db
         self.fs = fs
+        self.settings = get_settings()
         self.ingest = IngestPipeline(db, fs)
         self.extract = ExtractPipeline(db, fs)
         self.synthesise = SynthesisePipeline(db, fs)
@@ -93,6 +94,7 @@ class BookService:
         get_settings.cache_clear()
         settings = get_settings()
         log_llm_mode(settings)
+        self.settings = settings
         self.extract.reload_llm(settings)
         self.synthesise.reload_llm(settings)
         self.adapt.reload_llm(settings)
@@ -159,12 +161,17 @@ class BookService:
         return self.get_status(book_id)
 
     def run_ingest_sync(self, book_id: str) -> None:
-        """Run Phase 1–6: shared ingest, then extract→synth→adapt→validate per chapter.
+        """Run ingest then decode chapters progressively.
 
-        Chapters complete in order so chapter 1 can be opened while later chapters
-        continue decoding.
+        Prototype (``PROTOTYPE_ONE_SHOT``): one LLM extract per chapter + soft
+        validate; skips synthesise and hinglish adapt.
+
+        Full path: extract→synth→adapt→validate per chapter so chapter 1 can
+        open while later chapters continue decoding.
         """
         self._refresh_llm_clients()
+        settings = getattr(self, "settings", None) or get_settings()
+        oneshot = bool(settings.prototype_one_shot)
         self.ingest.run(book_id)
         book = self.db.get_book(book_id)
         if not book:
@@ -191,6 +198,12 @@ class BookService:
 
         summaries: list[dict[str, Any]] = []
         updated = list(chapters)
+        logger.info(
+            "Decode path book=%s oneshot=%s chapters=%s",
+            book_id,
+            oneshot,
+            len(chapters),
+        )
 
         for index, ch in enumerate(list(updated)):
             if ch.get("status") == ChapterStatus.FAILED.value:
@@ -214,12 +227,42 @@ class BookService:
                 current_chapter_id=chapter_id,
                 job_id=job_id,
             )
-            extract_result = self.extract.extract_chapter(book_id, ch, book=book)
+            if oneshot:
+                extract_result = self.extract.extract_chapter_oneshot(
+                    book_id, ch, book=book
+                )
+            else:
+                extract_result = self.extract.extract_chapter(book_id, ch, book=book)
             ch = extract_result["chapter"]
             updated = self._merge_chapter(book_id, chapter_id, ch)
             if ch.get("status") == ChapterStatus.FAILED.value:
                 summaries.append(extract_result["summary"])
                 self._refresh_progress_counts(book_id, updated)
+                continue
+
+            if oneshot:
+                # Prototype: soft EN-only persist; skip synth + hinglish.
+                self.db.update_book(
+                    book_id,
+                    processing_status=BookProcessingStatus.VALIDATING.value,
+                    current_stage=UIStage.VALIDATING_OUTPUT.value,
+                    current_chapter_id=chapter_id,
+                )
+                validate_result = self.validate_persist.validate_chapter_soft(
+                    book_id, chapter_id, chapter=ch
+                )
+                ch = validate_result["chapter"]
+                updated = self._merge_chapter(book_id, chapter_id, ch)
+                summaries.append(validate_result["summary"])
+                self._refresh_progress_counts(book_id, updated)
+                logger.info(
+                    "Oneshot chapter done book=%s chapter=%s index=%s/%s status=%s",
+                    book_id,
+                    chapter_id,
+                    index + 1,
+                    len(updated),
+                    ch.get("status"),
+                )
                 continue
 
             # --- synthesise ---

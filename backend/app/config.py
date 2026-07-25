@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     max_chapter_retries: int = 3
     retry_backoff_seconds: float = 2.0
 
+    # Prototype: one Anthropic call per chapter (skip multi-chunk + synth + hinglish)
+    prototype_one_shot: bool = True
+
     def ensure_directories(self) -> None:
         for path in (
             self.data_dir,

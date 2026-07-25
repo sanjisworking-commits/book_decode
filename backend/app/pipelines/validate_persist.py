@@ -81,6 +81,140 @@ class ValidatePersistPipeline:
         self.db.replace_chapters(book_id, updated)
         self._finalise_book(book, job_id, updated, summaries)
 
+    def validate_chapter_soft(
+        self,
+        book_id: str,
+        chapter_id: str,
+        *,
+        chapter: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Light EN-only validate/persist for prototype one-shot spines.
+
+        Strips bad source refs, requires nodes, skips bilingual alignment when
+        hinglish is absent, and does not LLM-repair. Minor schema noise is
+        tolerated so the Book Map / Spine UI can open a demo spine.
+        """
+        chapters = {c["chapter_id"]: c for c in self.db.list_chapters(book_id)}
+        ch = chapter or chapters.get(chapter_id)
+        if not ch:
+            raise KeyError(chapter_id)
+
+        try:
+            source = self.fs.read_json(self.fs.chapter_source_path(book_id, chapter_id))
+            allowed = {b["block_id"] for b in (source.get("source_blocks") or [])}
+            spine = self._load_spine(book_id, chapter_id)
+        except Exception as exc:
+            failed = {
+                **ch,
+                "status": ChapterStatus.FAILED.value,
+                "error": {
+                    "code": "validation_failed",
+                    "message": str(exc),
+                    "details": {"mode": "soft"},
+                },
+            }
+            return {
+                "chapter": failed,
+                "summary": {
+                    "chapter_id": chapter_id,
+                    "ok": False,
+                    "reason": str(exc),
+                    "mode": "soft",
+                },
+            }
+
+        working = {
+            **ch,
+            "status": ChapterStatus.VALIDATING.value,
+            "error": None,
+        }
+        spine = strip_invalid_source_refs(spine, allowed)
+        spine["language_modes"] = ["en"]
+        for node in spine.get("nodes") or []:
+            node.setdefault("statement_hinglish", None)
+            node.setdefault("explanation_hinglish", None)
+
+        nodes = spine.get("nodes") or []
+        if not nodes:
+            failed = {
+                **working,
+                "status": ChapterStatus.FAILED.value,
+                "error": {
+                    "code": "validation_failed",
+                    "message": "Soft validation: spine has no nodes.",
+                    "details": {"mode": "soft"},
+                },
+            }
+            return {
+                "chapter": failed,
+                "summary": {
+                    "chapter_id": chapter_id,
+                    "ok": False,
+                    "reason": "no_nodes",
+                    "mode": "soft",
+                },
+            }
+
+        schema_errors = validate_spine_schema(spine)
+        ref_errors = validate_source_refs(spine, allowed)
+        # Soft demo path: keep spine even with minor schema noise; UI can still open.
+
+        now = utc_now_iso()
+        notes = (spine.get("confidence_summary") or {}).get("notes") or ""
+        if schema_errors:
+            notes = (notes + " | soft_schema_warnings: " + "; ".join(schema_errors[:5])).strip(
+                " |"
+            )
+        if ref_errors:
+            notes = (notes + " | soft_ref_warnings: " + "; ".join(ref_errors[:5])).strip(" |")
+        spine["confidence_summary"] = {
+            "overall": (spine.get("confidence_summary") or {}).get("overall"),
+            "notes": notes,
+        }
+        prev = spine.get("processing") if isinstance(spine.get("processing"), dict) else {}
+        spine["processing"] = {
+            "model": prev.get("model")
+            or (self.settings.llm_model if not self.settings.llm_mock else "mock"),
+            "prompt_versions": dict(prev.get("prompt_versions") or {}),
+            "created_at": prev.get("created_at") or now,
+            "updated_at": now,
+        }
+        spine["validation"] = {
+            "schema_valid": len(schema_errors) == 0,
+            "source_refs_valid": len(ref_errors) == 0,
+            "bilingual_aligned": False,
+            "checked_at": now,
+            "mode": "soft",
+        }
+
+        self.fs.write_json(self.fs.chapter_spine_en_path(book_id, chapter_id), spine)
+        self.fs.write_json(self.fs.chapter_spine_path(book_id, chapter_id), spine)
+        self.fs.write_json(self.fs.chapter_spine_candidate_path(book_id, chapter_id), spine)
+
+        completed = {
+            **working,
+            "status": ChapterStatus.COMPLETED.value,
+            "error": None,
+            "preview": {
+                **(working.get("preview") or {}),
+                "validation": "soft_ok",
+                "repair_attempts": 0,
+                "node_count": len(nodes),
+                "schema_warnings": len(schema_errors),
+            },
+        }
+        return {
+            "chapter": completed,
+            "summary": {
+                "chapter_id": chapter_id,
+                "ok": True,
+                "mode": "soft",
+                "node_count": len(nodes),
+                "schema_warnings": schema_errors[:5],
+                "path": str(self.fs.chapter_spine_path(book_id, chapter_id)),
+            },
+        }
+
     def validate_chapter(
         self,
         book_id: str,
@@ -147,7 +281,11 @@ class ValidatePersistPipeline:
             ref_errors = validate_source_refs(spine, allowed)
             align_errors: list[str] = []
             en_path = self.fs.chapter_spine_en_path(book_id, chapter_id)
-            if en_path.exists() and "hinglish" in (spine.get("language_modes") or []):
+            # Skip bilingual alignment when hinglish mode is absent (prototype EN-only).
+            if (
+                en_path.exists()
+                and "hinglish" in (spine.get("language_modes") or [])
+            ):
                 try:
                     english = self.fs.read_json(en_path)
                     align_errors = check_bilingual_alignment(english, spine)

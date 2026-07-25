@@ -8,6 +8,7 @@ from typing import Any
 
 from app.config import Settings
 from app.domain.enums import BookProcessingStatus, ChapterStatus, UIStage
+from app.pipelines.chunk import estimate_tokens
 from app.pipelines.llm_bind import bind_llm
 from app.pipelines.validate_spine import (
     strip_invalid_source_refs,
@@ -140,6 +141,169 @@ class ExtractPipeline:
         logger.info(
             "Phase 3 complete book_id=%s ok=%s failed=%s", book_id, ok, failed
         )
+
+    def extract_chapter_oneshot(
+        self,
+        book_id: str,
+        chapter: dict[str, Any],
+        *,
+        book: dict[str, Any] | None = None,
+        persist_status: bool = True,
+    ) -> dict[str, Any]:
+        """Prototype: one Anthropic JSON call per chapter → English spine artefacts.
+
+        Skips multi-chunk partials. Hinglish fields stay null. Writes
+        ``*.spine.en.json`` and ``*.spine.json`` for soft validation / UI.
+        """
+        book = book or self.db.get_book(book_id)
+        if not book:
+            raise KeyError(book_id)
+
+        chapter_id = chapter["chapter_id"]
+        prompt_text, prompt_hash = load_prompt("argument_spine_extraction.md")
+        system = self._system_prompt(prompt_text)
+        token_budget = max(1000, int(self.settings.chunk_token_limit))
+
+        try:
+            source_path = self.fs.chapter_source_path(book_id, chapter_id)
+            if not source_path.exists():
+                raise RuntimeError("Missing source artefact for chapter.")
+
+            source = self.fs.read_json(source_path)
+            all_blocks = list(source.get("source_blocks") or [])
+            if not all_blocks:
+                raise RuntimeError("Chapter has no source blocks.")
+
+            packed = self._pack_blocks_to_budget(all_blocks, token_budget)
+            chunk_blocks = [
+                {
+                    "block_id": b["block_id"],
+                    "block_type": b.get("block_type"),
+                    "text": b.get("text"),
+                }
+                for b in packed
+            ]
+            chunk = {
+                "chunk_id": f"{chapter_id}.oneshot",
+                "block_ids": [b["block_id"] for b in chunk_blocks],
+                "strategy": "oneshot_chapter",
+            }
+
+            ch_working = {
+                **chapter,
+                "status": ChapterStatus.EXTRACTING.value,
+                "error": None,
+                "preview": {
+                    **(chapter.get("preview") or {}),
+                    "extract_mode": "oneshot",
+                    "extract_chunk_index": 1,
+                    "extract_chunk_total": 1,
+                    "extract_chunk_id": chunk["chunk_id"],
+                    "oneshot_blocks": len(chunk_blocks),
+                    "oneshot_blocks_total": len(all_blocks),
+                },
+            }
+            if persist_status:
+                self._patch_chapter(book_id, chapter_id, ch_working)
+                self.db.update_book(book_id, current_chapter_id=chapter_id)
+
+            logger.info(
+                "Extracting oneshot chapter=%s book=%s blocks=%s/%s budget=%s",
+                chapter_id,
+                book_id,
+                len(chunk_blocks),
+                len(all_blocks),
+                token_budget,
+            )
+
+            user = self._user_prompt(
+                book=book,
+                chapter=chapter,
+                chunk=chunk,
+                blocks=chunk_blocks,
+                partial=False,
+            )
+            raw = self.llm.complete_json(system=system, user=user)
+            spine = self._postprocess_spine(
+                raw,
+                book_id=book_id,
+                chapter_id=chapter_id,
+                allowed={b["block_id"] for b in chunk_blocks},
+                model=self.settings.llm_model if not self.settings.llm_mock else "mock",
+                prompt_hash=prompt_hash,
+            )
+            # Prototype: English-only artefact pair for Book Map / Spine UI.
+            spine["language_modes"] = ["en"]
+            for node in spine.get("nodes") or []:
+                node["statement_hinglish"] = None
+                node["explanation_hinglish"] = None
+
+            en_path = self.fs.chapter_spine_en_path(book_id, chapter_id)
+            spine_path = self.fs.chapter_spine_path(book_id, chapter_id)
+            cand_path = self.fs.chapter_spine_candidate_path(book_id, chapter_id)
+            self.fs.write_json(en_path, spine)
+            self.fs.write_json(spine_path, spine)
+            self.fs.write_json(cand_path, spine)
+
+            done = {
+                **ch_working,
+                "status": ChapterStatus.PENDING.value,
+                "preview": {
+                    **(ch_working.get("preview") or {}),
+                    "partial_count": 1,
+                    "needs_synthesis": False,
+                    "extraction": "ok",
+                    "extract_mode": "oneshot",
+                    "node_count": len(spine.get("nodes") or []),
+                },
+            }
+            return {
+                "chapter": done,
+                "summary": {
+                    "chapter_id": chapter_id,
+                    "ok": True,
+                    "partial_count": 1,
+                    "needs_synthesis": False,
+                    "extract_mode": "oneshot",
+                    "node_count": len(spine.get("nodes") or []),
+                },
+            }
+        except Exception as exc:
+            logger.exception(
+                "Oneshot extraction failed chapter=%s book=%s", chapter_id, book_id
+            )
+            failed = {
+                **chapter,
+                "status": ChapterStatus.FAILED.value,
+                "error": {
+                    "code": "extraction_failed",
+                    "message": str(exc),
+                    "details": {"extract_mode": "oneshot"},
+                },
+            }
+            return {
+                "chapter": failed,
+                "summary": {
+                    "chapter_id": chapter_id,
+                    "ok": False,
+                    "reason": str(exc),
+                    "extract_mode": "oneshot",
+                },
+            }
+
+    def _pack_blocks_to_budget(
+        self, blocks: list[dict[str, Any]], token_budget: int
+    ) -> list[dict[str, Any]]:
+        """Keep prefix of chapter blocks that fit under the extract token budget."""
+        packed: list[dict[str, Any]] = []
+        used = 0
+        for block in blocks:
+            cost = estimate_tokens(block.get("text") or "")
+            if packed and used + cost > token_budget:
+                break
+            packed.append(block)
+            used += cost
+        return packed or blocks[:1]
 
     def extract_chapter(
         self,

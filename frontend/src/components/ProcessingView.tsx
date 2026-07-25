@@ -71,15 +71,17 @@ export function ProcessingView({ status, elapsedLabel, waitingOnLlm }: Props) {
       {!failed && !done && waitingOnLlm && (
         <p className="muted" style={{ margin: "-12px 0 24px", fontSize: 13, lineHeight: 1.45 }}>
           {activeChapter?.progress
-            ? `Anthropic is generating the Argument Spine (${activeChapter.progress}). `
-            : "Anthropic is generating the Argument Spine. "}
-          A single chapter call can take 1–5 minutes. If your uvicorn log shows
-          “Extracting chunk …”, it is still working — not frozen.
+            ? `Generating the Argument Spine (${activeChapter.progress}). `
+            : "Generating the Argument Spine. "}
+          One LLM call per chapter — usually 1–3 minutes. If uvicorn shows
+          “Extracting oneshot …” or “Extracting chunk …”, it is still working —
+          not frozen.
         </p>
       )}
       {!failed && !done && !waitingOnLlm && status.processing_status === "analysing_chapters" && (
         <p className="muted" style={{ margin: "-12px 0 24px", fontSize: 13, lineHeight: 1.45 }}>
-          Extracting Argument Spine from chapter text via the LLM.
+          One LLM call per chapter — usually 1–3 minutes. Extracting the
+          Argument Spine from chapter text.
         </p>
       )}
 
