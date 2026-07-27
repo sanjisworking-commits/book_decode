@@ -127,29 +127,46 @@ def test_oneshot_block_budget_auto_caps_groq() -> None:
         llm_model="llama-3.3-70b-versatile",
         chunk_token_limit=20000,
         llm_max_input_tokens=0,
+        llm_max_tokens=8192,
     )
-    # 70% of 12k TPM → prompt budget in conservative estimator units
-    assert groq.extract_prompt_token_budget() == 8400
-    assert groq.oneshot_block_token_budget() == 8400
+    # TPM 12k → max_tokens clamped to 35% (4200), prompt = 12k - 4200 - 500
+    assert groq.effective_llm_max_tokens() == 4200
+    assert groq.extract_prompt_token_budget() == 7300
+    assert groq.effective_llm_max_tokens() + groq.extract_prompt_token_budget() <= 12000
     scout = Settings(
         llm_api_base="https://api.groq.com/openai/v1",
         llm_model="meta-llama/llama-4-scout-17b-16e-instruct",
         llm_max_input_tokens=0,
+        llm_max_tokens=8192,
     )
-    assert scout.extract_prompt_token_budget() == 21000
+    assert scout.effective_llm_max_tokens() == 8192  # 35% of 30k = 10500, min(8192,10500)
+    assert scout.extract_prompt_token_budget() == 30000 - 8192 - 500
     anthropic = Settings(
         llm_api_base="https://api.anthropic.com",
         chunk_token_limit=20000,
         llm_max_input_tokens=0,
+        llm_max_tokens=16384,
     )
+    assert anthropic.effective_llm_max_tokens() == 16384
     assert anthropic.extract_prompt_token_budget() == 24000
     explicit = Settings(
         llm_api_base="https://api.groq.com/openai/v1",
         llm_model="llama-3.3-70b-versatile",
-        chunk_token_limit=20000,
         llm_max_input_tokens=5000,
+        llm_max_tokens=8192,
     )
     assert explicit.extract_prompt_token_budget() == 5000
+
+
+def test_groq_prompt_plus_max_tokens_under_tpm() -> None:
+    """Regression: Requested 15389 was ~7.2k prompt + 8192 max_tokens."""
+    s = Settings(
+        llm_api_base="https://api.groq.com/openai/v1",
+        llm_model="llama-3.3-70b-versatile",
+        llm_max_tokens=8192,
+        llm_max_input_tokens=0,
+    )
+    assert s.extract_prompt_token_budget() + s.effective_llm_max_tokens() <= 12000
 
 
 def test_http_413_mentions_input_budget_hint() -> None:

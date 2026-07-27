@@ -61,7 +61,7 @@ class Settings(BaseSettings):
         return "groq.com" in (self.llm_api_base or "").lower()
 
     def provider_input_token_limit(self) -> int | None:
-        """Hard provider ceiling for prompt tokens when known (e.g. Groq TPM)."""
+        """Hard provider ceiling for prompt+max_tokens when known (e.g. Groq TPM)."""
         if not self.is_groq():
             return None
         model = (self.llm_model or "").lower()
@@ -74,21 +74,35 @@ class Settings(BaseSettings):
         # llama-3.3-70b-versatile and unknown Groq models
         return 12000
 
+    def effective_llm_max_tokens(self) -> int:
+        """Completion budget that still leaves room for the extract prompt on Groq.
+
+        Groq free-tier 413s use Requested ≈ prompt_tokens + max_tokens against TPM.
+        Life Ch1: ~7.2k prompt + 8192 max_tokens → 15389 > 12000.
+        """
+        configured = max(256, int(self.llm_max_tokens))
+        tpm = self.provider_input_token_limit()
+        if tpm is None:
+            return configured
+        # Reserve ~60% of TPM for the prompt, rest for completion (min 2k).
+        max_for_tpm = max(2048, int(tpm * 0.35))
+        return min(configured, max_for_tpm)
+
     def extract_prompt_token_budget(self) -> int:
         """Max estimated tokens for system+user messages in one extract call.
 
-        Uses a conservative estimator for Groq (see ``estimate_request_tokens``):
-        chars/4 under-counts Llama tokenizers by ~1.4× on Life Ch1 payloads.
+        For Groq, subtract ``effective_llm_max_tokens`` from TPM so
+        prompt + max_tokens stays under the provider ceiling.
         """
         explicit = int(self.llm_max_input_tokens or 0)
         if explicit > 0:
             return max(1500, explicit)
 
-        provider = self.provider_input_token_limit()
-        if provider is not None:
-            # Stay under TPM with headroom for tokenizer variance.
-            return max(1500, int(provider * 0.7))
-        # Non-Groq: generous budget; still pack by serialized prompt size.
+        tpm = self.provider_input_token_limit()
+        if tpm is not None:
+            max_out = self.effective_llm_max_tokens()
+            # Conservative estimator (~3 chars/token) + small safety margin.
+            return max(1500, tpm - max_out - 500)
         return max(4000, int(self.chunk_token_limit) + 4000)
 
     def oneshot_block_token_budget(self) -> int:

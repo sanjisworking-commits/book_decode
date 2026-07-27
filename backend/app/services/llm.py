@@ -113,10 +113,10 @@ def _post_json(
             detail_l = detail.lower()
             if status in (413, 429) or "rate_limit" in detail_l or "request too large" in detail_l:
                 hint = (
-                    " Request exceeded the provider token budget. For Groq free tier, "
-                    "keep LLM_MAX_TOKENS≤8192 and LLM_MAX_INPUT_TOKENS≤8000 (0=auto). "
-                    "Extract packs the serialized prompt—not just block text—so pull "
-                    "the latest branch if you still see ~20k+ Requested tokens."
+                    " Request exceeded the provider token budget. Groq free tier "
+                    "counts prompt_tokens + max_tokens against TPM (12k on 70b). "
+                    "Latest code auto-clamps both; set LLM_MAX_TOKENS=4096 and "
+                    "LLM_MAX_INPUT_TOKENS=6000 if you still 413 after pulling."
                 )
             raise LLMError(
                 f"{error_prefix} {status}: {detail or exc}.{hint}"
@@ -166,10 +166,11 @@ class OpenAICompatibleClient:
             )
 
         url = self.settings.llm_api_base.rstrip("/") + "/chat/completions"
+        max_tokens = self.settings.effective_llm_max_tokens()
         payload: dict[str, Any] = {
             "model": self.settings.llm_model,
             "temperature": self.settings.llm_temperature,
-            "max_tokens": self.settings.llm_max_tokens,
+            "max_tokens": max_tokens,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -201,7 +202,7 @@ class OpenAICompatibleClient:
         _ensure_complete_generation(
             stop_reason=None,
             finish_reason=finish_reason if isinstance(finish_reason, str) else None,
-            max_tokens=self.settings.llm_max_tokens,
+            max_tokens=max_tokens,
         )
         return parse_json_content(content)
 
