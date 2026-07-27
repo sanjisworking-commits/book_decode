@@ -3,10 +3,32 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
+
+_PATH_FIELDS = (
+    "data_dir",
+    "upload_dir",
+    "processed_dir",
+    "books_dir",
+    "log_dir",
+    "sqlite_path",
+)
+
+
+def _resolve_repo_path(value: Path | str) -> Path:
+    """Resolve relative data paths against the repo root, not process cwd.
+
+    ``BOOKS_DIR=./data/books`` in ``.env`` otherwise lands under ``backend/data``
+    when uvicorn is started from ``backend/``.
+    """
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = ROOT_DIR / path
+    return path.resolve()
 
 
 class Settings(BaseSettings):
@@ -56,6 +78,11 @@ class Settings(BaseSettings):
 
     # Prototype: one Anthropic call per chapter (skip multi-chunk + synth + hinglish)
     prototype_one_shot: bool = True
+
+    @field_validator(*_PATH_FIELDS, mode="before")
+    @classmethod
+    def _repo_relative_paths(cls, value: Path | str) -> Path:
+        return _resolve_repo_path(value)
 
     def is_groq(self) -> bool:
         return "groq.com" in (self.llm_api_base or "").lower()
