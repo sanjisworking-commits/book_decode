@@ -16,6 +16,7 @@ ALLOWED_BLOCK_TYPES = frozenset(
         "image",
         "figure",
         "diagram",
+        "caption",
         "equation",
         "code",
         "sidebar",
@@ -93,10 +94,8 @@ def validate_source_chapter_payload(payload: Any) -> dict[str, Any]:
 
         block_type = str(raw.get("block_type") or "paragraph").strip()
         if block_type not in ALLOWED_BLOCK_TYPES:
-            raise ValueError(
-                "invalid_source_json",
-                f"source_blocks[{i}].block_type {block_type!r} is not allowed.",
-            )
+            # Hand-cleaned JSON may use labels like "caption"; keep text, coerce type.
+            block_type = "other"
 
         text = raw.get("text")
         if text is None:

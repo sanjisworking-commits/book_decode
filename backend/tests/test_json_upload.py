@@ -66,6 +66,20 @@ def test_validate_rejects_empty_blocks() -> None:
     assert exc.value.args[0] == "invalid_source_json"
 
 
+def test_validate_accepts_caption_block_type() -> None:
+    payload = _sample_source()
+    payload["source_blocks"][0]["block_type"] = "caption"
+    out = validate_source_chapter_payload(payload)
+    assert out["source_blocks"][0]["block_type"] == "caption"
+
+
+def test_validate_coerces_unknown_block_type_to_other() -> None:
+    payload = _sample_source()
+    payload["source_blocks"][0]["block_type"] = "pullquote"
+    out = validate_source_chapter_payload(payload)
+    assert out["source_blocks"][0]["block_type"] == "other"
+
+
 @pytest.fixture()
 def stores(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
