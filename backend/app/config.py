@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # Per-request HTTP timeout for LLM calls (large Argument Spine JSON can be slow).
     llm_timeout_seconds: float = 300.0
     llm_http_retries: int = 2
+    # Cap on chapter-block tokens packed into one extract request (0 = auto).
+    # Groq free llama-3.3-70b-versatile TPM is ~12k — keep blocks well under that.
+    llm_max_input_tokens: int = 0
 
     # Phase 6 validation / retries
     max_chapter_retries: int = 3
@@ -53,6 +56,23 @@ class Settings(BaseSettings):
 
     # Prototype: one Anthropic call per chapter (skip multi-chunk + synth + hinglish)
     prototype_one_shot: bool = True
+
+    def oneshot_block_token_budget(self) -> int:
+        """Max estimated tokens of source blocks for one extract call.
+
+        Leaves headroom for the system prompt + JSON envelope so the full
+        request stays under provider TPM / request-size limits.
+        """
+        chunk = max(1000, int(self.chunk_token_limit))
+        explicit = int(self.llm_max_input_tokens or 0)
+        if explicit > 0:
+            return max(1000, min(chunk, explicit))
+
+        base = (self.llm_api_base or "").lower()
+        # Groq free tier for llama-3.3-70b-versatile rejects ~12k+ token requests.
+        if "groq.com" in base:
+            return max(1000, min(chunk, 8000))
+        return chunk
 
     def ensure_directories(self) -> None:
         for path in (

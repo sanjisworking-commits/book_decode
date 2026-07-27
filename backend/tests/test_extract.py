@@ -121,6 +121,49 @@ def test_factory_returns_mock() -> None:
     assert isinstance(client, MockLLMClient)
 
 
+def test_oneshot_block_budget_auto_caps_groq() -> None:
+    groq = Settings(
+        llm_api_base="https://api.groq.com/openai/v1",
+        chunk_token_limit=20000,
+        llm_max_input_tokens=0,
+    )
+    assert groq.oneshot_block_token_budget() == 8000
+    anthropic = Settings(
+        llm_api_base="https://api.anthropic.com",
+        chunk_token_limit=20000,
+        llm_max_input_tokens=0,
+    )
+    assert anthropic.oneshot_block_token_budget() == 20000
+    explicit = Settings(
+        llm_api_base="https://api.groq.com/openai/v1",
+        chunk_token_limit=20000,
+        llm_max_input_tokens=5000,
+    )
+    assert explicit.oneshot_block_token_budget() == 5000
+
+
+def test_http_413_mentions_input_budget_hint() -> None:
+    settings = Settings(
+        llm_provider="openai_compatible",
+        llm_api_base="https://api.groq.com/openai/v1",
+        llm_api_key="gsk-test",
+        llm_model="llama-3.3-70b-versatile",
+        llm_http_retries=0,
+    )
+    client = OpenAICompatibleClient(settings)
+    fake_resp = MagicMock()
+    fake_resp.status_code = 413
+    fake_resp.text = '{"error":{"message":"Request too large","code":"rate_limit_exceeded"}}'
+    err = httpx.HTTPStatusError("413", request=MagicMock(), response=fake_resp)
+    fake_http = MagicMock()
+    fake_http.__enter__.return_value = fake_http
+    fake_http.post.side_effect = err
+
+    with patch("app.services.llm.httpx.Client", return_value=fake_http):
+        with pytest.raises(LLMError, match="LLM_MAX_INPUT_TOKENS"):
+            client.complete_json(system="sys", user="user")
+
+
 def test_factory_returns_openai_compatible() -> None:
     client = get_llm_client(
         Settings(llm_mock=False, llm_provider="openai", llm_api_key="sk-test")

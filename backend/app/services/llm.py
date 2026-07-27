@@ -108,8 +108,17 @@ def _post_json(
                 return data
         except httpx.HTTPStatusError as exc:
             detail = (exc.response.text or "")[:500]
+            hint = ""
+            status = exc.response.status_code
+            detail_l = detail.lower()
+            if status in (413, 429) or "rate_limit" in detail_l or "request too large" in detail_l:
+                hint = (
+                    " Request exceeded the provider token budget. For Groq free tier, set "
+                    "LLM_MAX_INPUT_TOKENS=8000 (and CHUNK_TOKEN_LIMIT=8000) so one-shot "
+                    "extract packs fewer chapter blocks per call."
+                )
             raise LLMError(
-                f"{error_prefix} {exc.response.status_code}: {detail or exc}"
+                f"{error_prefix} {status}: {detail or exc}.{hint}"
             ) from exc
         except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.WriteTimeout) as exc:
             last_exc = exc

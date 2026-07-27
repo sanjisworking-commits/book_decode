@@ -162,7 +162,7 @@ class ExtractPipeline:
         chapter_id = chapter["chapter_id"]
         prompt_text, prompt_hash = load_prompt("argument_spine_extraction.md")
         system = self._system_prompt(prompt_text)
-        token_budget = max(1000, int(self.settings.chunk_token_limit))
+        token_budget = self.settings.oneshot_block_token_budget()
 
         try:
             source_path = self.fs.chapter_source_path(book_id, chapter_id)
@@ -175,6 +175,16 @@ class ExtractPipeline:
                 raise RuntimeError("Chapter has no source blocks.")
 
             packed = self._pack_blocks_to_budget(all_blocks, token_budget)
+            if len(packed) < len(all_blocks):
+                logger.warning(
+                    "Oneshot truncated chapter=%s book=%s blocks=%s/%s budget=%s "
+                    "(raise LLM_MAX_INPUT_TOKENS / CHUNK_TOKEN_LIMIT if the provider allows)",
+                    chapter_id,
+                    book_id,
+                    len(packed),
+                    len(all_blocks),
+                    token_budget,
+                )
             chunk_blocks = [
                 {
                     "block_id": b["block_id"],
