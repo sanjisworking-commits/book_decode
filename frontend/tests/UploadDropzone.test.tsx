@@ -8,10 +8,14 @@ describe("UploadDropzone", () => {
   it("renders idle CTA and max size copy", () => {
     render(
       <MemoryRouter>
-        <UploadDropzone state={{ kind: "idle" }} onFile={() => undefined} />
+        <UploadDropzone
+          state={{ kind: "idle" }}
+          uploadKind="chapter"
+          onFile={() => undefined}
+        />
       </MemoryRouter>,
     );
-    expect(screen.getByText(/Drop your source JSON here/i)).toBeInTheDocument();
+    expect(screen.getByText(/Drop a chapter JSON here/i)).toBeInTheDocument();
     expect(screen.getByText(/max 50 MB/i)).toBeInTheDocument();
   });
 
@@ -24,6 +28,7 @@ describe("UploadDropzone", () => {
           message: "bad",
           filename: "notes.pdf",
         }}
+        uploadKind="chapter"
         onFile={() => undefined}
       />,
     );
@@ -35,7 +40,7 @@ describe("UploadDropzone", () => {
     const user = userEvent.setup();
     const onFile = vi.fn();
     const { container } = render(
-      <UploadDropzone state={{ kind: "idle" }} onFile={onFile} />,
+      <UploadDropzone state={{ kind: "idle" }} uploadKind="book" onFile={onFile} />,
     );
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(["{}"], "chapter.json", { type: "application/json" });

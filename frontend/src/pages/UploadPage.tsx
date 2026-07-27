@@ -1,19 +1,26 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { BrandHeader } from "../components/BrandHeader";
 import {
   describeFile,
   UploadDropzone,
+  type UploadKind,
   type UploadUiState,
 } from "../components/UploadDropzone";
 import { validateSourceJsonClient } from "../lib/constants";
-import { startProcessing, uploadBook } from "../services/api";
+import { appendChapterJson, startProcessing, uploadBook } from "../services/api";
 import { ApiError } from "../types/api";
 
 const UPLOAD_TIMEOUT_MS = 60_000;
 
 export function UploadPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const continueBookId = searchParams.get("bookId")?.trim() || null;
+
+  const [uploadKind, setUploadKind] = useState<UploadKind>(
+    continueBookId ? "chapter" : "book",
+  );
   const [state, setState] = useState<UploadUiState>({ kind: "idle" });
   const [busy, setBusy] = useState(false);
   const [apiHint, setApiHint] = useState<string | null>(null);
@@ -77,6 +84,18 @@ export function UploadPage() {
     setBusy(true);
     setState({ kind: "uploading", ...meta });
     try {
+      if (continueBookId && uploadKind === "chapter") {
+        const book = await appendChapterJson(continueBookId, file, UPLOAD_TIMEOUT_MS);
+        setState({
+          kind: "success",
+          filename: meta.filename,
+          bookId: book.book_id,
+          title: book.title,
+        });
+        navigate(`/books/${book.book_id}/map`);
+        return;
+      }
+
       const book = await uploadBook(file, UPLOAD_TIMEOUT_MS);
       setState({
         kind: "success",
@@ -84,7 +103,6 @@ export function UploadPage() {
         bookId: book.book_id,
         title: book.title,
       });
-      // Leave Uploading as soon as the book exists; start pipeline without blocking navigation.
       void startProcessing(book.book_id).catch(() => {
         /* ProcessingPage will surface status / allow retry via reprocess */
       });
@@ -126,10 +144,12 @@ export function UploadPage() {
         Upload
       </div>
       <h1 style={{ fontSize: 28, fontWeight: 600, letterSpacing: "-0.02em", margin: "0 0 8px" }}>
-        Add source JSON to decode
+        {continueBookId ? "Add the next chapter" : "Add source JSON to decode"}
       </h1>
       <p className="muted" style={{ margin: "0 0 22px", lineHeight: 1.5 }}>
-        We validate the file, then start the Argument Spine pipeline.
+        {continueBookId
+          ? `Appending to book ${continueBookId}. Completed chapters stay unlocked.`
+          : "Upload an entire book at once, or start with one chapter and add the rest as you go."}
       </p>
       {apiHint && (
         <div
@@ -147,15 +167,76 @@ export function UploadPage() {
           {apiHint}
         </div>
       )}
+
+      {!continueBookId && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 12,
+            marginBottom: 18,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              setUploadKind("book");
+              setState({ kind: "idle" });
+            }}
+            disabled={busy}
+            style={{
+              textAlign: "left",
+              padding: "16px 18px",
+              borderRadius: "var(--bd-r-card)",
+              border: `2px solid ${uploadKind === "book" ? "var(--bd-primary)" : "var(--bd-border)"}`,
+              background: uploadKind === "book" ? "var(--bd-surface)" : "var(--bd-canvas)",
+              cursor: "pointer",
+            }}
+          >
+            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>
+              Upload entire book
+            </div>
+            <div className="muted" style={{ fontSize: 13, lineHeight: 1.45 }}>
+              One JSON file with a chapters[] array. All map tiles appear; chapters unlock as they decode.
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setUploadKind("chapter");
+              setState({ kind: "idle" });
+            }}
+            disabled={busy}
+            style={{
+              textAlign: "left",
+              padding: "16px 18px",
+              borderRadius: "var(--bd-r-card)",
+              border: `2px solid ${uploadKind === "chapter" ? "var(--bd-primary)" : "var(--bd-border)"}`,
+              background: uploadKind === "chapter" ? "var(--bd-surface)" : "var(--bd-canvas)",
+              cursor: "pointer",
+            }}
+          >
+            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>
+              Upload a chapter
+            </div>
+            <div className="muted" style={{ fontSize: 13, lineHeight: 1.45 }}>
+              One source_chapter JSON creates the book. Open chapter 1 while you add the next from the map.
+            </div>
+          </button>
+        </div>
+      )}
+
       <UploadDropzone
         state={state}
+        uploadKind={uploadKind}
+        appendMode={Boolean(continueBookId)}
         disabled={busy}
         onFile={handleFile}
         onClearError={() => setState({ kind: "idle" })}
       />
       {state.kind === "success" && (
         <p className="muted" style={{ marginTop: 16, textAlign: "center" }}>
-          Starting decode…
+          {continueBookId ? "Chapter added — returning to Book Map…" : "Starting decode…"}
         </p>
       )}
     </div>

@@ -42,7 +42,7 @@ describe("ProcessingView", () => {
   it("shows progressive unlock copy when a chapter is already ready", () => {
     render(<ProcessingView status={base} />);
     expect(screen.getByText(/First chapters ready/i)).toBeInTheDocument();
-    expect(screen.getByText(/you can open the first/i)).toBeInTheDocument();
+    expect(screen.getByText(/you can open them while more are added or decoding/i)).toBeInTheDocument();
     expect(screen.getByText(/Analysing chapters/i)).toBeInTheDocument();
     expect(screen.getByText("One")).toBeInTheDocument();
     expect(screen.getByText("Two")).toBeInTheDocument();

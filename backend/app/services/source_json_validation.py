@@ -1,8 +1,8 @@
-"""Validate uploaded source_chapter JSON for the JSON-only ingest path."""
+"""Validate uploaded source_chapter / source_book JSON for the JSON-only ingest path."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 ALLOWED_BLOCK_TYPES = frozenset(
     {
@@ -28,6 +28,11 @@ ALLOWED_BLOCK_TYPES = frozenset(
         "other",
     }
 )
+
+
+def is_book_wrapper_payload(payload: Any) -> bool:
+    """True when the JSON is a whole-book wrapper with chapters[]."""
+    return isinstance(payload, dict) and isinstance(payload.get("chapters"), list)
 
 
 def validate_source_chapter_payload(payload: Any) -> dict[str, Any]:
@@ -138,3 +143,76 @@ def validate_source_chapter_payload(payload: Any) -> dict[str, Any]:
         "heading_hierarchy": hierarchy,
         "source_blocks": source_blocks,
     }
+
+
+def validate_source_book_payload(payload: Any) -> dict[str, Any]:
+    """Return a normalised whole-book wrapper or raise ValueError(code, message)."""
+    if not isinstance(payload, dict):
+        raise ValueError("invalid_source_json", "Root JSON value must be an object.")
+
+    schema_version = payload.get("schema_version")
+    if schema_version is not None and str(schema_version) not in {"2.0", "1.0"}:
+        raise ValueError(
+            "invalid_source_json",
+            f"Unsupported schema_version: {schema_version!r} (expected 2.0).",
+        )
+
+    book_id_hint = str(payload.get("book_id") or "").strip()
+    book_title = str(
+        payload.get("book_title") or payload.get("title") or book_id_hint or "Untitled book"
+    ).strip()
+
+    chapters_in = payload.get("chapters")
+    if not isinstance(chapters_in, list) or not chapters_in:
+        raise ValueError(
+            "invalid_source_json",
+            "chapters must be a non-empty array for whole-book JSON.",
+        )
+
+    seen_chapter_ids: set[str] = set()
+    chapters: list[dict[str, Any]] = []
+    for i, raw in enumerate(chapters_in):
+        if not isinstance(raw, dict):
+            raise ValueError(
+                "invalid_source_json", f"chapters[{i}] must be an object."
+            )
+        merged = dict(raw)
+        if not merged.get("book_id") and book_id_hint:
+            merged["book_id"] = book_id_hint
+        if merged.get("schema_version") is None and schema_version is not None:
+            merged["schema_version"] = schema_version
+        try:
+            chapter = validate_source_chapter_payload(merged)
+        except ValueError as exc:
+            code = str(exc.args[0]) if exc.args else "invalid_source_json"
+            msg = str(exc.args[1]) if len(exc.args) >= 2 else str(exc)
+            raise ValueError(code, f"chapters[{i}]: {msg}") from exc
+        chapter_id = chapter["chapter_id"]
+        if chapter_id in seen_chapter_ids:
+            raise ValueError(
+                "invalid_source_json",
+                f"Duplicate chapter_id in chapters[]: {chapter_id}",
+            )
+        seen_chapter_ids.add(chapter_id)
+        if chapter.get("chapter_number") is None:
+            chapter["chapter_number"] = i + 1
+        chapters.append(chapter)
+
+    if not book_id_hint:
+        book_id_hint = str(chapters[0].get("book_id") or "book")
+
+    return {
+        "schema_version": "2.0",
+        "book_id": book_id_hint,
+        "book_title": book_title,
+        "chapters": chapters,
+    }
+
+
+def parse_source_json_payload(
+    payload: Any,
+) -> tuple[Literal["book", "chapter"], dict[str, Any]]:
+    """Detect whole-book vs single-chapter upload and validate."""
+    if is_book_wrapper_payload(payload):
+        return "book", validate_source_book_payload(payload)
+    return "chapter", validate_source_chapter_payload(payload)

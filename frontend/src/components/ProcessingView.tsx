@@ -65,7 +65,7 @@ export function ProcessingView({ status, elapsedLabel, waitingOnLlm }: Props) {
           : done
             ? `${status.processed_chapter_count} of ${status.chapter_count} chapters decoded.`
             : progressive
-              ? `${readyCount} of ${status.chapter_count || "?"} chapters ready — you can open the first while the rest keep decoding.`
+              ? `${readyCount} of ${status.chapter_count || "?"} chapters ready — you can open them while more are added or decoding.`
               : `Stage ${status.stage_index} of ${status.stages_total} · ${status.processed_chapter_count}/${status.chapter_count || "?"} chapters ready`}
       </p>
       {!failed && !done && waitingOnLlm && (

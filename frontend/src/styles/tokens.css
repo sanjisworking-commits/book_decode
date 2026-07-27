@@ -67,6 +67,14 @@
   --bd-ease: cubic-bezier(.4,0,.2,1);
   --bd-dur-fast: 120ms;
   --bd-dur: 250ms;
+
+  /* Decode & Remember — parchment surface */
+  --dr-page: #f2e9d3;
+  --dr-card: #fdf9ee;
+  --dr-node: #ece1c6;
+  --dr-ink: #3a3122;
+  --dr-accent: #7a4a2b;
+  --dr-font-serif: 'Newsreader', Georgia, serif;
 }
 
 @keyframes bdPulse { 0%,100% { opacity:1 } 50% { opacity:.45 } }

@@ -31,6 +31,7 @@ class BookMetadata(BaseModel):
     upload_timestamp: str
     completion_timestamp: str | None = None
     error: ErrorBody | None = None
+    converter: str | None = None
 
 
 class ChapterSummary(BaseModel):

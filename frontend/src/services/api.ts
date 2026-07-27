@@ -57,6 +57,27 @@ export async function uploadBook(
   }
 }
 
+/** Append one source_chapter JSON to an existing JSON book and resume decode. */
+export async function appendChapterJson(
+  bookId: string,
+  file: File,
+  timeoutMs = 60_000,
+): Promise<BookMetadata> {
+  const form = new FormData();
+  form.append("file", file);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await request<BookMetadata>(`/books/${bookId}/chapters/upload-json`, {
+      method: "POST",
+      body: form,
+      signal: ctrl.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** @deprecated Prefer uploadBook — JSON-only path. */
 export async function uploadSourceJson(
   file: File,

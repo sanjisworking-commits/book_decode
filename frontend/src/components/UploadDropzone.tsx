@@ -1,6 +1,8 @@
 import { useCallback, useRef, useState } from "react";
 import { formatBytes, MAX_JSON_SIZE_MB } from "../lib/constants";
 
+export type UploadKind = "book" | "chapter";
+
 export type UploadUiState =
   | { kind: "idle" }
   | { kind: "error"; code: string; message: string; filename?: string; sizeLabel?: string }
@@ -9,15 +11,18 @@ export type UploadUiState =
 
 type Props = {
   state: UploadUiState;
+  uploadKind: UploadKind;
   onFile: (file: File) => void;
   onClearError?: () => void;
   disabled?: boolean;
+  /** When appending to an existing book, tweak copy. */
+  appendMode?: boolean;
 };
 
 const ERROR_COPY: Record<string, { title: string; body: string }> = {
   invalid_extension: {
     title: "Wrong file type",
-    body: "Only clean source_chapter .json files are accepted.",
+    body: "Only clean source .json files are accepted.",
   },
   file_too_large: {
     title: "This file is too large",
@@ -25,7 +30,11 @@ const ERROR_COPY: Record<string, { title: string; body: string }> = {
   },
   invalid_source_json: {
     title: "Invalid source JSON",
-    body: "The file must match the source_chapter shape (chapter_id, source_blocks with block_id / block_type / text).",
+    body: "Use a source_chapter shape, or a whole-book wrapper with chapters[].",
+  },
+  duplicate_chapter: {
+    title: "Chapter already on this book",
+    body: "That chapter_id is already registered. Use a new chapter file.",
   },
   upload_timeout: {
     title: "Upload timed out",
@@ -37,7 +46,14 @@ const ERROR_COPY: Record<string, { title: string; body: string }> = {
   },
 };
 
-export function UploadDropzone({ state, onFile, onClearError, disabled }: Props) {
+export function UploadDropzone({
+  state,
+  uploadKind,
+  onFile,
+  onClearError,
+  disabled,
+  appendMode = false,
+}: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
 
@@ -62,6 +78,25 @@ export function UploadDropzone({ state, onFile, onClearError, disabled }: Props)
       : state.kind === "success"
         ? "#f5f9f6"
         : "var(--bd-canvas)";
+
+  const idleTitle =
+    uploadKind === "book"
+      ? "Drop entire-book JSON here"
+      : appendMode
+        ? "Drop the next chapter JSON here"
+        : "Drop a chapter JSON here";
+
+  const idleBody =
+    uploadKind === "book"
+      ? "One file with book_title and a chapters[] array of source_chapter objects."
+      : appendMode
+        ? "Adds one source_chapter to this book and resumes decode for pending chapters."
+        : "One source_chapter file creates the book. Add later chapters from the Book Map.";
+
+  const schemaHint =
+    uploadKind === "book"
+      ? `.json · max ${MAX_JSON_SIZE_MB} MB · whole-book schema`
+      : `.json · max ${MAX_JSON_SIZE_MB} MB · source_chapter schema`;
 
   return (
     <div
@@ -99,10 +134,10 @@ export function UploadDropzone({ state, onFile, onClearError, disabled }: Props)
       {state.kind === "idle" && (
         <>
           <div style={{ fontSize: 28, fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 10 }}>
-            Drop your source JSON here
+            {idleTitle}
           </div>
           <div className="muted" style={{ marginBottom: 18, lineHeight: 1.5 }}>
-            Clean chapter blocks go to the LLM to build a source-grounded Argument Spine.
+            {idleBody}
           </div>
           <button
             type="button"
@@ -113,7 +148,7 @@ export function UploadDropzone({ state, onFile, onClearError, disabled }: Props)
             Choose JSON
           </button>
           <div className="eyebrow" style={{ marginTop: 16 }}>
-            .json only · max {MAX_JSON_SIZE_MB} MB · source_chapter schema
+            {schemaHint}
           </div>
         </>
       )}

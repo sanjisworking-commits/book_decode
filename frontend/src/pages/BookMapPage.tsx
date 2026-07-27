@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { BrandHeader } from "../components/BrandHeader";
-import { isBookReady, isChapterReady, isTerminalBookStatus } from "../lib/constants";
+import { describeFile } from "../components/UploadDropzone";
+import { isBookReady, isChapterReady, isTerminalBookStatus, validateSourceJsonClient } from "../lib/constants";
 import {
+  appendChapterJson,
   deleteBook,
   getBook,
   listChapters,
@@ -19,23 +21,30 @@ export function BookMapPage() {
   const [chapters, setChapters] = useState<ChapterSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [appendHint, setAppendHint] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const pollGen = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
+    const gen = ++pollGen.current;
 
     async function tick() {
       try {
         const [b, ch] = await Promise.all([getBook(bookId), listChapters(bookId)]);
-        if (cancelled) return;
+        if (cancelled || gen !== pollGen.current) return;
         setBook(b);
         setChapters(ch.chapters);
         setError(null);
-        if (!isTerminalBookStatus(b.processing_status)) {
+        const pendingLeft = ch.chapters.some(
+          (c) => !isChapterReady(c.status) && c.status !== "failed",
+        );
+        if (!isTerminalBookStatus(b.processing_status) || pendingLeft) {
           timer = window.setTimeout(tick, 2000);
         }
       } catch (err) {
-        if (cancelled) return;
+        if (cancelled || gen !== pollGen.current) return;
         setError(err instanceof ApiError ? err.message : "Failed to load book map");
         timer = window.setTimeout(tick, 3000);
       }
@@ -84,6 +93,48 @@ export function BookMapPage() {
     }
   }
 
+  async function onAppendChapter(file: File) {
+    const clientErr = validateSourceJsonClient(file);
+    const meta = describeFile(file);
+    if (clientErr) {
+      setAppendHint(`${clientErr.message} (${meta.filename})`);
+      return;
+    }
+    setBusy(true);
+    setAppendHint(null);
+    try {
+      await appendChapterJson(bookId, file);
+      const [b, ch] = await Promise.all([getBook(bookId), listChapters(bookId)]);
+      setBook(b);
+      setChapters(ch.chapters);
+      setAppendHint(`Added ${meta.filename} — decoding…`);
+      // Restart polling for the new pending chapter.
+      pollGen.current += 1;
+      const gen = pollGen.current;
+      const poll = async () => {
+        try {
+          const [nb, nch] = await Promise.all([getBook(bookId), listChapters(bookId)]);
+          if (gen !== pollGen.current) return;
+          setBook(nb);
+          setChapters(nch.chapters);
+          const pendingLeft = nch.chapters.some(
+            (c) => !isChapterReady(c.status) && c.status !== "failed",
+          );
+          if (!isTerminalBookStatus(nb.processing_status) || pendingLeft) {
+            window.setTimeout(poll, 2000);
+          }
+        } catch {
+          if (gen === pollGen.current) window.setTimeout(poll, 3000);
+        }
+      };
+      window.setTimeout(poll, 1500);
+    } catch (err) {
+      setAppendHint(err instanceof ApiError ? err.message : "Could not add chapter");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (error && !book) {
     return (
       <div className="page">
@@ -105,6 +156,8 @@ export function BookMapPage() {
     failedCount > 0 ||
     (stillProcessing && readyCount > 0);
   const bookReady = book ? isBookReady(book.processing_status) : false;
+  const isJsonBook = book?.converter === "json";
+  const showAddChapter = isJsonBook;
 
   return (
     <div className="page">
@@ -159,8 +212,37 @@ export function BookMapPage() {
                 <span style={{ color: "#2f6640", fontWeight: 500 }}>{readyCount} ready</span>
               )}
             </div>
+            {readyCount > 0 && stillProcessing && (
+              <div className="muted" style={{ fontSize: 13, marginTop: 8, lineHeight: 1.45 }}>
+                Chapter {readyCount} ready — you can open it while more chapters are added or decoding.
+              </div>
+            )}
           </div>
-          <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {showAddChapter && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  className="sr-only"
+                  disabled={busy}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (file) void onAppendChapter(file);
+                  }}
+                />
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={busy}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  + Add next chapter
+                </button>
+              </>
+            )}
             <button type="button" className="btn btn-secondary" disabled={busy} onClick={onReprocess}>
               ↻ Reprocess book
             </button>
@@ -170,8 +252,10 @@ export function BookMapPage() {
           </div>
         </div>
 
-        {error && (
-          <div style={{ padding: "12px 28px", color: "#934231", fontSize: 13 }}>{error}</div>
+        {(error || appendHint) && (
+          <div style={{ padding: "12px 28px", color: error ? "#934231" : "var(--bd-muted)", fontSize: 13 }}>
+            {error || appendHint}
+          </div>
         )}
 
         <div
@@ -185,6 +269,13 @@ export function BookMapPage() {
           {chapters.map((ch) => {
             const ready = isChapterReady(ch.status);
             const failed = ch.status === "failed";
+            const working =
+              !ready &&
+              !failed &&
+              (stillProcessing ||
+                ch.status === "pending" ||
+                ch.status === "extracting" ||
+                ch.status === "validating");
             return (
               <div
                 key={ch.chapter_id}
@@ -237,7 +328,7 @@ export function BookMapPage() {
                             : "var(--bd-faint)",
                       }}
                     />
-                    {ready ? "Ready" : failed ? "Failed" : ch.status}
+                    {ready ? "Ready" : failed ? "Failed" : working ? "Working…" : ch.status}
                   </span>
                 </div>
                 <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>
@@ -245,7 +336,7 @@ export function BookMapPage() {
                 </div>
                 {ready ? (
                   <div className="mono faint" style={{ fontSize: 12.5 }}>
-                    12 nodes · view spine →
+                    view spine →
                   </div>
                 ) : failed ? (
                   <button
@@ -262,7 +353,7 @@ export function BookMapPage() {
                   </button>
                 ) : (
                   <div className="mono faint" style={{ fontSize: 12.5 }}>
-                    {stillProcessing ? "Working…" : "Not ready yet"}
+                    {working ? "Working…" : "Not ready yet"}
                   </div>
                 )}
               </div>

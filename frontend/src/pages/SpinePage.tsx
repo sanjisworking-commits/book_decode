@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { SourcePreview, type SourcePreviewState } from "../components/SourcePreview";
 import { ProvenanceLegend } from "../components/ProvenanceLegend";
-import { SpineCanvas1a } from "../components/spine/SpineCanvas1a";
-import { SpineThreaded1b } from "../components/spine/SpineThreaded1b";
+import { DecodeMode } from "../components/modes/DecodeMode";
+import { ModeSwitcher, type ChapterMode } from "../components/modes/ModeSwitcher";
+import { RememberMode } from "../components/modes/RememberMode";
 import { isChapterReady } from "../lib/constants";
+import { toDecodeView, toRememberView } from "../lib/spineViews";
 import { getChapterSource, getChapterSpine, listChapters } from "../services/api";
 import type { ArgumentSpine, ChapterSummary, LanguageMode, SourceBlock } from "../types/api";
 import { ApiError } from "../types/api";
@@ -21,29 +23,45 @@ function useIsMobile(breakpoint = 720): boolean {
   return mobile;
 }
 
+function parseMode(raw: string | null): ChapterMode {
+  return raw === "remember" ? "remember" : "decode";
+}
+
 export function SpinePage() {
   const { bookId = "", chapterId = "" } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const mobile = useIsMobile();
+  const mode = parseMode(searchParams.get("mode"));
 
   const [spine, setSpine] = useState<ArgumentSpine | null>(null);
   const [chapters, setChapters] = useState<ChapterSummary[]>([]);
   const [lang, setLang] = useState<LanguageMode>("en");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<{ code: string; message: string } | null>(null);
   const [preview, setPreview] = useState<SourcePreviewState>({ status: "closed" });
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
   const [sourceCache, setSourceCache] = useState<SourceBlock[] | null>(null);
+
+  const setMode = useCallback(
+    (next: ChapterMode) => {
+      const params = new URLSearchParams(searchParams);
+      if (next === "decode") {
+        params.delete("mode");
+      } else {
+        params.set("mode", next);
+      }
+      setSearchParams(params, { replace: true });
+    },
+    [searchParams, setSearchParams],
+  );
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setSpine(null);
       setLoadError(null);
-      setSelectedId(null);
-      setExpandedId(null);
       setSourceCache(null);
+      setPreview({ status: "closed" });
       try {
         const [sp, ch] = await Promise.all([
           getChapterSpine(bookId, chapterId),
@@ -52,9 +70,6 @@ export function SpinePage() {
         if (cancelled) return;
         setSpine(sp);
         setChapters(ch.chapters);
-        const first = [...sp.nodes].sort((a, b) => a.order - b.order)[0];
-        setSelectedId(first?.id ?? null);
-        setExpandedId(first?.id ?? null);
       } catch (err) {
         if (cancelled) return;
         if (err instanceof ApiError) {
@@ -78,16 +93,24 @@ export function SpinePage() {
     };
   }, [bookId, chapterId]);
 
-  const orderedNodes = useMemo(
-    () => (spine ? [...spine.nodes].sort((a, b) => a.order - b.order) : []),
-    [spine],
+  const decodeView = useMemo(
+    () => (spine ? toDecodeView(spine, lang) : null),
+    [spine, lang],
+  );
+  const rememberView = useMemo(
+    () => (spine ? toRememberView(spine, lang) : null),
+    [spine, lang],
   );
 
   const chapterIndex = chapters.findIndex((c) => c.chapter_id === chapterId);
   const chapter = chapters[chapterIndex];
-  const prev = chapterIndex > 0 ? chapters[chapterIndex - 1] : null;
+  const readyChapters = chapters.filter((c) => isChapterReady(c.status));
+  const readyIndex = readyChapters.findIndex((c) => c.chapter_id === chapterId);
+  const prev = readyIndex > 0 ? readyChapters[readyIndex - 1] : null;
   const next =
-    chapterIndex >= 0 && chapterIndex < chapters.length - 1 ? chapters[chapterIndex + 1] : null;
+    readyIndex >= 0 && readyIndex < readyChapters.length - 1
+      ? readyChapters[readyIndex + 1]
+      : null;
   const remainingDecoding = chapters.some(
     (c) => c.chapter_id !== chapterId && !isChapterReady(c.status) && c.status !== "failed",
   );
@@ -124,6 +147,13 @@ export function SpinePage() {
     [bookId, chapterId, sourceCache],
   );
 
+  const goChapter = (target: ChapterSummary) => {
+    const params = new URLSearchParams();
+    if (mode === "remember") params.set("mode", "remember");
+    const q = params.toString();
+    navigate(`/books/${bookId}/chapters/${target.chapter_id}${q ? `?${q}` : ""}`);
+  };
+
   const chrome = (
     <div
       style={{
@@ -149,28 +179,29 @@ export function SpinePage() {
           </span>
         </div>
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <div className="mono faint" style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 8 }}>
           <button
             type="button"
             disabled={!prev}
-            onClick={() => prev && navigate(`/books/${bookId}/chapters/${prev.chapter_id}`)}
+            onClick={() => prev && goChapter(prev)}
             style={{ background: "none", border: 0, color: "inherit", padding: 0 }}
           >
             ‹
           </button>
           <span>
-            ch {chapterIndex >= 0 ? chapterIndex + 1 : "?"} / {chapters.length || "?"}
+            ch {readyIndex >= 0 ? readyIndex + 1 : "?"} / {readyChapters.length || "?"}
           </span>
           <button
             type="button"
             disabled={!next}
-            onClick={() => next && navigate(`/books/${bookId}/chapters/${next.chapter_id}`)}
+            onClick={() => next && goChapter(next)}
             style={{ background: "none", border: 0, color: "inherit", padding: 0 }}
           >
             ›
           </button>
         </div>
+        <ModeSwitcher mode={mode} onChange={setMode} />
         <div
           style={{
             display: "inline-flex",
@@ -236,7 +267,7 @@ export function SpinePage() {
     );
   }
 
-  if (!spine) {
+  if (!spine || !decodeView || !rememberView) {
     return (
       <div className="page">
         {chrome}
@@ -246,7 +277,7 @@ export function SpinePage() {
   }
 
   return (
-    <div className="page" style={{ maxWidth: 1200 }}>
+    <div className="page" style={{ maxWidth: 960 }}>
       {chrome}
       {remainingDecoding && (
         <div
@@ -264,25 +295,26 @@ export function SpinePage() {
           Decoding remaining chapters in the background…
         </div>
       )}
-      <div style={{ marginBottom: 14 }}>
-        <ProvenanceLegend />
-      </div>
+      {mode === "decode" && (
+        <div style={{ marginBottom: 14 }}>
+          <ProvenanceLegend />
+        </div>
+      )}
 
-      {mobile ? (
-        <SpineThreaded1b
-          nodes={orderedNodes}
-          expandedId={expandedId}
+      {mode === "decode" ? (
+        <DecodeMode
+          view={decodeView}
           lang={lang}
-          onToggle={(id) => setExpandedId((cur) => (cur === id ? null : id))}
           onOpenSources={openSources}
+          isMobile={mobile}
         />
       ) : (
-        <SpineCanvas1a
-          nodes={orderedNodes}
-          selectedId={selectedId}
+        <RememberMode
+          key={`${chapterId}-${mode}`}
+          view={rememberView}
           lang={lang}
-          onSelect={setSelectedId}
-          onOpenSources={openSources}
+          chapterId={chapterId}
+          isMobile={mobile}
         />
       )}
 

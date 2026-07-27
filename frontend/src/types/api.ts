@@ -42,6 +42,7 @@ export type BookMetadata = {
   upload_timestamp: string;
   completion_timestamp: string | null;
   error: ApiErrorBody | null;
+  converter?: string | null;
 };
 
 export type ChapterSummary = {

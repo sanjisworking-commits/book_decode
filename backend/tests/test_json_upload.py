@@ -12,7 +12,11 @@ from app.api.deps import reset_cached_stores
 from app.config import get_settings
 from app.domain.enums import BookProcessingStatus, ChapterStatus
 from app.services.books import BookService
-from app.services.source_json_validation import validate_source_chapter_payload
+from app.services.source_json_validation import (
+    parse_source_json_payload,
+    validate_source_book_payload,
+    validate_source_chapter_payload,
+)
 from app.storage.filesystem import FilesystemStore
 from app.storage.sqlite_store import SqliteStore
 
@@ -41,6 +45,32 @@ def _sample_source(**overrides) -> dict:
                 "order_index": 1,
             },
         ],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _sample_book(**overrides) -> dict:
+    ch2 = _sample_source(
+        chapter_id="ch02",
+        chapter_number=2,
+        chapter_title="Chapter 2",
+        heading_hierarchy=["Chapter 2"],
+        source_blocks=[
+            {
+                "block_id": "life-3-0.ch02.sec01.block001",
+                "section_id": "sec01",
+                "block_type": "paragraph",
+                "text": "Chapter two expands the claim.",
+                "order_index": 0,
+            }
+        ],
+    )
+    payload = {
+        "schema_version": "2.0",
+        "book_id": "life-3-0",
+        "book_title": "Life 3.0",
+        "chapters": [_sample_source(), ch2],
     }
     payload.update(overrides)
     return payload
@@ -80,6 +110,20 @@ def test_validate_coerces_unknown_block_type_to_other() -> None:
     assert out["source_blocks"][0]["block_type"] == "other"
 
 
+def test_validate_source_book_payload_ok() -> None:
+    out = validate_source_book_payload(_sample_book())
+    assert out["book_title"] == "Life 3.0"
+    assert len(out["chapters"]) == 2
+    assert out["chapters"][1]["chapter_id"] == "ch02"
+
+
+def test_parse_detects_book_vs_chapter() -> None:
+    kind, _ = parse_source_json_payload(_sample_book())
+    assert kind == "book"
+    kind, _ = parse_source_json_payload(_sample_source())
+    assert kind == "chapter"
+
+
 @pytest.fixture()
 def stores(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
@@ -116,6 +160,77 @@ def test_upload_source_json_writes_artefacts(stores) -> None:
     assert fs.chapter_chunks_path(meta.book_id, chapter_id).exists()
     source = fs.read_json(fs.chapter_source_path(meta.book_id, chapter_id))
     assert source["source_blocks"]
+
+
+def test_upload_whole_book_json_creates_all_chapters(stores) -> None:
+    _settings, db, fs = stores
+    service = BookService(db, fs)
+    payload = json.dumps(_sample_book()).encode("utf-8")
+    meta = service.upload_source_json(
+        filename="life.json", data=payload, max_size_bytes=5_000_000
+    )
+    assert meta.title == "Life 3.0"
+    assert meta.chapter_count == 2
+    chapters = db.list_chapters(meta.book_id)
+    assert [c["chapter_id"] for c in chapters] == ["ch01", "ch02"]
+    for ch in chapters:
+        assert fs.chapter_source_path(meta.book_id, ch["chapter_id"]).exists()
+        assert ch["status"] == ChapterStatus.PENDING.value
+
+
+def test_append_preserves_completed_and_resumes(stores) -> None:
+    _settings, db, fs = stores
+    service = BookService(db, fs)
+    meta = service.upload_source_json(
+        filename="ch01.json",
+        data=json.dumps(_sample_source()).encode("utf-8"),
+        max_size_bytes=5_000_000,
+    )
+    db.update_book(
+        meta.book_id,
+        job_id="job-json",
+        processing_status=BookProcessingStatus.QUEUED.value,
+    )
+    service.run_ingest_sync(meta.book_id)
+    chapters = db.list_chapters(meta.book_id)
+    assert chapters[0]["status"] == ChapterStatus.COMPLETED.value
+    spine_path = fs.chapter_spine_path(meta.book_id, "ch01")
+    assert spine_path.exists()
+    spine_before = fs.read_json(spine_path)
+
+    service.append_source_json(
+        book_id=meta.book_id,
+        filename="ch02.json",
+        data=json.dumps(
+            _sample_source(
+                chapter_id="ch02",
+                chapter_number=2,
+                chapter_title="Chapter 2",
+                source_blocks=[
+                    {
+                        "block_id": "life-3-0.ch02.sec01.block001",
+                        "section_id": "sec01",
+                        "block_type": "paragraph",
+                        "text": "Second chapter text.",
+                        "order_index": 0,
+                    }
+                ],
+            )
+        ).encode("utf-8"),
+        max_size_bytes=5_000_000,
+    )
+    chapters = db.list_chapters(meta.book_id)
+    assert len(chapters) == 2
+    assert chapters[0]["status"] == ChapterStatus.COMPLETED.value
+    assert chapters[1]["status"] == ChapterStatus.PENDING.value
+    assert fs.read_json(spine_path) == spine_before
+
+    service.resume_processing(meta.book_id)
+    service.run_ingest_sync(meta.book_id)
+    chapters = db.list_chapters(meta.book_id)
+    assert chapters[0]["status"] == ChapterStatus.COMPLETED.value
+    assert chapters[1]["status"] == ChapterStatus.COMPLETED.value
+    assert fs.read_json(spine_path) == spine_before
 
 
 def test_run_ingest_sync_json_skips_docling(stores, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -168,6 +283,7 @@ def test_api_upload_json_ok(client: TestClient) -> None:
     body = res.json()
     assert body["book_id"]
     assert body["title"] == "Chapter 1"
+    assert body.get("converter") == "json"
 
     status = client.get(f"/books/{body['book_id']}/chapters")
     assert status.status_code == 200
@@ -178,3 +294,53 @@ def test_api_upload_json_ok(client: TestClient) -> None:
     source = client.get(f"/books/{body['book_id']}/chapters/ch01/source")
     assert source.status_code == 200
     assert len(source.json()["source_blocks"]) == 2
+
+
+def test_api_upload_whole_book_json(client: TestClient) -> None:
+    payload = json.dumps(_sample_book()).encode("utf-8")
+    res = client.post(
+        "/books/upload-json",
+        files={"file": ("book.json", payload, "application/json")},
+    )
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body["title"] == "Life 3.0"
+    chapters = client.get(f"/books/{body['book_id']}/chapters").json()["chapters"]
+    assert len(chapters) == 2
+
+
+def test_api_append_chapter_json(client: TestClient) -> None:
+    first = json.dumps(_sample_source()).encode("utf-8")
+    res = client.post(
+        "/books/upload-json",
+        files={"file": ("ch01.json", first, "application/json")},
+    )
+    assert res.status_code == 201
+    book_id = res.json()["book_id"]
+    # Finish ch01 decode before append in this sync TestClient path.
+    client.post(f"/books/{book_id}/process")
+
+    second = json.dumps(
+        _sample_source(
+            chapter_id="ch02",
+            chapter_number=2,
+            chapter_title="Chapter 2",
+            source_blocks=[
+                {
+                    "block_id": "life-3-0.ch02.sec01.block001",
+                    "section_id": "sec01",
+                    "block_type": "paragraph",
+                    "text": "Second chapter.",
+                    "order_index": 0,
+                }
+            ],
+        )
+    ).encode("utf-8")
+    append = client.post(
+        f"/books/{book_id}/chapters/upload-json",
+        files={"file": ("ch02.json", second, "application/json")},
+    )
+    assert append.status_code == 201, append.text
+    chapters = client.get(f"/books/{book_id}/chapters").json()["chapters"]
+    assert len(chapters) == 2
+    assert {c["chapter_id"] for c in chapters} == {"ch01", "ch02"}

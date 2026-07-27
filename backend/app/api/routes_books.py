@@ -7,6 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile
 from app.api.deps import get_book_service, get_settings
 from app.api.errors import AppError
 from app.config import Settings
+from app.domain.enums import BookProcessingStatus
 from app.schemas.api_models import (
     BookMetadata,
     ChapterListResponse,
@@ -15,6 +16,18 @@ from app.schemas.api_models import (
 from app.services.books import BookService
 
 router = APIRouter(prefix="/books", tags=["books"])
+
+_ACTIVE_BOOK_STATUSES = {
+    BookProcessingStatus.QUEUED.value,
+    BookProcessingStatus.READING_STRUCTURE.value,
+    BookProcessingStatus.DETECTING_CHAPTERS.value,
+    BookProcessingStatus.PREPARING_BLOCKS.value,
+    BookProcessingStatus.ANALYSING_CHAPTERS.value,
+    BookProcessingStatus.CONSTRUCTING_SPINES.value,
+    BookProcessingStatus.CREATING_HINGLISH.value,
+    BookProcessingStatus.VALIDATING.value,
+    BookProcessingStatus.SAVING.value,
+}
 
 
 @router.post("/upload", response_model=BookMetadata, status_code=201)
@@ -46,7 +59,7 @@ async def upload_source_json(
     service: BookService = Depends(get_book_service),
     settings: Settings = Depends(get_settings),
 ) -> BookMetadata:
-    """Upload a clean source_chapter JSON (JSON-only ingest; LLM extract still runs)."""
+    """Upload a source_chapter or whole-book JSON (JSON-only ingest; LLM extract still runs)."""
     filename = file.filename or "chapter.json"
     data = await file.read()
     try:
@@ -61,6 +74,50 @@ async def upload_source_json(
         else:
             code, message = "invalid_source_json", str(exc)
         raise AppError(400, code, message) from exc
+
+
+@router.post(
+    "/{book_id}/chapters/upload-json",
+    response_model=BookMetadata,
+    status_code=201,
+)
+async def append_source_json(
+    book_id: str,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    service: BookService = Depends(get_book_service),
+    settings: Settings = Depends(get_settings),
+) -> BookMetadata:
+    """Append one source_chapter to a JSON book and resume decode for pending chapters."""
+    filename = file.filename or "chapter.json"
+    data = await file.read()
+    try:
+        before = service.db.get_book(book_id)
+        already_decoding = bool(
+            before and before.get("processing_status") in _ACTIVE_BOOK_STATUSES
+        )
+        meta = service.append_source_json(
+            book_id=book_id,
+            filename=filename,
+            data=data,
+            max_size_bytes=settings.max_epub_size_bytes,
+        )
+    except KeyError as exc:
+        raise AppError(404, "book_not_found", f"Book not found: {book_id}") from exc
+    except ValueError as exc:
+        if len(exc.args) >= 2:
+            code, message = str(exc.args[0]), str(exc.args[1])
+        else:
+            code, message = "invalid_source_json", str(exc)
+        status = 409 if code == "duplicate_chapter" else 400
+        raise AppError(status, code, message) from exc
+
+    # If a decode loop is already running it will re-list pending chapters.
+    # Otherwise resume without wiping completed spines.
+    if not already_decoding:
+        service.resume_processing(book_id)
+        background_tasks.add_task(service.run_ingest_sync, book_id)
+    return meta
 
 
 @router.post("/{book_id}/process", response_model=ProcessingStatusResponse, status_code=202)
