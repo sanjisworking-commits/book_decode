@@ -85,7 +85,8 @@ export function BookMapPage() {
   async function onRetryChapter(chapterId: string) {
     setBusy(true);
     try {
-      await retryChapter(bookId, chapterId);
+      // force=true recovers chapters stuck after validate-only retries with no spine
+      await retryChapter(bookId, chapterId, true);
       navigate(`/books/${bookId}/processing`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Retry failed");

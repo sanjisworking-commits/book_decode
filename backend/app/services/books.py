@@ -764,6 +764,16 @@ class BookService:
 
         retry_count = int(target.get("retry_count") or 0)
         max_retries = self.validate_persist.max_retries
+        spine_missing = not (
+            self.fs.chapter_spine_path(book_id, chapter_id).exists()
+            or self.fs.chapter_spine_en_path(book_id, chapter_id).exists()
+            or self.fs.chapter_spine_candidate_path(book_id, chapter_id).exists()
+        )
+        # Prior validate-only retries can exhaust the counter while no spine exists.
+        # Missing artefacts require re-extract — do not block on that exhausted count.
+        if spine_missing:
+            force = True
+            retry_count = 0
         if not force and retry_count >= max_retries:
             raise RuntimeError("max_retries_exceeded")
 

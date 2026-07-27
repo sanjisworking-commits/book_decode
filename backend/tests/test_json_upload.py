@@ -391,3 +391,54 @@ def test_retry_chapter_reextracts_when_spine_missing(stores) -> None:
     )
     assert fs.chapter_spine_path(meta.book_id, "ch02").exists()
     assert (ch.error is None) or (ch.error.message != "No spine artefact found for validation.")
+
+
+def test_retry_recovers_after_exhausted_validate_only_retries(stores) -> None:
+    """Stuck CH02: retry_count exhausted + no spine must still re-extract."""
+    _settings, db, fs = stores
+    service = BookService(db, fs)
+    payload = Path(
+        "/home/ubuntu/.cursor/projects/workspace/uploads/ch02.source_caeb.json"
+    )
+    if payload.exists():
+        data = payload.read_bytes()
+    else:
+        data = json.dumps(
+            _sample_source(
+                chapter_id="ch02",
+                chapter_number=2,
+                chapter_title="Vernon Mountcastle's Big Idea",
+            )
+        ).encode("utf-8")
+    meta = service.upload_source_json(
+        filename="ch02.source.json", data=data, max_size_bytes=5_000_000
+    )
+    chapters = db.list_chapters(meta.book_id)
+    db.replace_chapters(
+        meta.book_id,
+        [
+            {
+                **chapters[0],
+                "status": ChapterStatus.FAILED.value,
+                "retry_count": service.validate_persist.max_retries,
+                "error": {
+                    "code": "validation_failed",
+                    "message": "No spine artefact found for validation.",
+                    "details": None,
+                },
+            }
+        ],
+    )
+    db.update_book(
+        meta.book_id,
+        processing_status=BookProcessingStatus.COMPLETED_WITH_ERRORS.value,
+        failed_chapter_count=1,
+        processed_chapter_count=0,
+    )
+
+    status = service.retry_chapter(meta.book_id, "ch02")
+    ch = next(c for c in status.chapters if c.chapter_id == "ch02")
+    assert ch.status == ChapterStatus.COMPLETED.value, (
+        ch.error.message if ch.error else ch.status
+    )
+    assert fs.chapter_spine_path(meta.book_id, "ch02").exists()
