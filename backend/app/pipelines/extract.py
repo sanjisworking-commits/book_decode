@@ -8,7 +8,7 @@ from typing import Any
 
 from app.config import Settings
 from app.domain.enums import BookProcessingStatus, ChapterStatus, UIStage
-from app.pipelines.chunk import estimate_tokens
+from app.pipelines.chunk import estimate_request_tokens
 from app.pipelines.llm_bind import bind_llm
 from app.pipelines.validate_spine import (
     strip_invalid_source_refs,
@@ -162,7 +162,7 @@ class ExtractPipeline:
         chapter_id = chapter["chapter_id"]
         prompt_text, prompt_hash = load_prompt("argument_spine_extraction.md")
         system = self._system_prompt(prompt_text)
-        token_budget = self.settings.oneshot_block_token_budget()
+        prompt_budget = self.settings.extract_prompt_token_budget()
 
         try:
             source_path = self.fs.chapter_source_path(book_id, chapter_id)
@@ -174,25 +174,15 @@ class ExtractPipeline:
             if not all_blocks:
                 raise RuntimeError("Chapter has no source blocks.")
 
-            packed = self._pack_blocks_to_budget(all_blocks, token_budget)
-            if len(packed) < len(all_blocks):
-                logger.warning(
-                    "Oneshot truncated chapter=%s book=%s blocks=%s/%s budget=%s "
-                    "(raise LLM_MAX_INPUT_TOKENS / CHUNK_TOKEN_LIMIT if the provider allows)",
-                    chapter_id,
-                    book_id,
-                    len(packed),
-                    len(all_blocks),
-                    token_budget,
-                )
-            chunk_blocks = [
-                {
-                    "block_id": b["block_id"],
-                    "block_type": b.get("block_type"),
-                    "text": b.get("text"),
-                }
-                for b in packed
-            ]
+            chunk_blocks, user, prompt_tokens = self._fit_blocks_to_prompt_budget(
+                book=book,
+                chapter=chapter,
+                system=system,
+                blocks=all_blocks,
+                prompt_budget=prompt_budget,
+                chunk_id=f"{chapter_id}.oneshot",
+                partial=False,
+            )
             chunk = {
                 "chunk_id": f"{chapter_id}.oneshot",
                 "block_ids": [b["block_id"] for b in chunk_blocks],
@@ -211,6 +201,8 @@ class ExtractPipeline:
                     "extract_chunk_id": chunk["chunk_id"],
                     "oneshot_blocks": len(chunk_blocks),
                     "oneshot_blocks_total": len(all_blocks),
+                    "prompt_tokens_est": prompt_tokens,
+                    "prompt_budget": prompt_budget,
                 },
             }
             if persist_status:
@@ -218,21 +210,16 @@ class ExtractPipeline:
                 self.db.update_book(book_id, current_chapter_id=chapter_id)
 
             logger.info(
-                "Extracting oneshot chapter=%s book=%s blocks=%s/%s budget=%s",
+                "Extracting oneshot chapter=%s book=%s blocks=%s/%s "
+                "prompt_tokens_est=%s budget=%s",
                 chapter_id,
                 book_id,
                 len(chunk_blocks),
                 len(all_blocks),
-                token_budget,
+                prompt_tokens,
+                prompt_budget,
             )
 
-            user = self._user_prompt(
-                book=book,
-                chapter=chapter,
-                chunk=chunk,
-                blocks=chunk_blocks,
-                partial=False,
-            )
             raw = self.llm.complete_json(system=system, user=user)
             spine = self._postprocess_spine(
                 raw,
@@ -301,19 +288,149 @@ class ExtractPipeline:
                 },
             }
 
-    def _pack_blocks_to_budget(
-        self, blocks: list[dict[str, Any]], token_budget: int
-    ) -> list[dict[str, Any]]:
-        """Keep prefix of chapter blocks that fit under the extract token budget."""
-        packed: list[dict[str, Any]] = []
-        used = 0
-        for block in blocks:
-            cost = estimate_tokens(block.get("text") or "")
-            if packed and used + cost > token_budget:
-                break
-            packed.append(block)
-            used += cost
-        return packed or blocks[:1]
+    def _fit_blocks_to_prompt_budget(
+        self,
+        *,
+        book: dict[str, Any],
+        chapter: dict[str, Any],
+        system: str,
+        blocks: list[dict[str, Any]],
+        prompt_budget: int,
+        chunk_id: str,
+        partial: bool,
+    ) -> tuple[list[dict[str, Any]], str, int]:
+        """Pack a prefix of blocks so system+user stay under ``prompt_budget``.
+
+        Budgets the *serialized* extract prompt (not raw block text). Life Ch1
+        showed JSON envelopes inflating ~7k text tokens into ~21k prompt tokens
+        (~29k on Groq's tokenizer).
+        """
+        if not blocks:
+            raise RuntimeError("No blocks available for extract prompt.")
+
+        conservative = self.settings.is_groq()
+        slim = [
+            {
+                "block_id": b["block_id"],
+                "block_type": b.get("block_type"),
+                "text": b.get("text"),
+            }
+            for b in blocks
+            if b.get("block_id")
+        ]
+        if not slim:
+            raise RuntimeError("No blocks with block_id for extract prompt.")
+
+        def build(n: int) -> tuple[list[dict[str, Any]], str, int]:
+            chosen = slim[: max(1, n)]
+            chunk = {
+                "chunk_id": chunk_id,
+                "block_ids": [b["block_id"] for b in chosen],
+            }
+            user = self._user_prompt(
+                book=book,
+                chapter=chapter,
+                chunk=chunk,
+                blocks=chosen,
+                partial=partial,
+            )
+            tokens = estimate_request_tokens(
+                system, conservative=conservative
+            ) + estimate_request_tokens(user, conservative=conservative)
+            return chosen, user, tokens
+
+        # Fast path: everything fits.
+        all_blocks, all_user, all_tokens = build(len(slim))
+        if all_tokens <= prompt_budget:
+            return all_blocks, all_user, all_tokens
+
+        lo, hi = 1, len(slim)
+        best_n = 1
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            _, _, tokens = build(mid)
+            if tokens <= prompt_budget:
+                best_n = mid
+                lo = mid + 1
+            else:
+                hi = mid - 1
+
+        chosen, user, tokens = build(best_n)
+        # If even one block overflows, truncate its text so the call can proceed.
+        if tokens > prompt_budget and len(chosen) == 1:
+            chosen, user, tokens = self._truncate_single_block_prompt(
+                book=book,
+                chapter=chapter,
+                system=system,
+                block=chosen[0],
+                prompt_budget=prompt_budget,
+                chunk_id=chunk_id,
+                partial=partial,
+                conservative=conservative,
+            )
+
+        if len(chosen) < len(slim):
+            logger.warning(
+                "Extract prompt truncated chapter=%s chunk=%s blocks=%s/%s "
+                "prompt_tokens_est=%s budget=%s",
+                chapter.get("chapter_id"),
+                chunk_id,
+                len(chosen),
+                len(slim),
+                tokens,
+                prompt_budget,
+            )
+        return chosen, user, tokens
+
+    def _truncate_single_block_prompt(
+        self,
+        *,
+        book: dict[str, Any],
+        chapter: dict[str, Any],
+        system: str,
+        block: dict[str, Any],
+        prompt_budget: int,
+        chunk_id: str,
+        partial: bool,
+        conservative: bool,
+    ) -> tuple[list[dict[str, Any]], str, int]:
+        text = block.get("text") or ""
+        # Binary-search character length that fits.
+        lo, hi = 200, len(text)
+        best = text[:200]
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            trial = {
+                **block,
+                "text": text[:mid] + ("…" if mid < len(text) else ""),
+            }
+            user = self._user_prompt(
+                book=book,
+                chapter=chapter,
+                chunk={"chunk_id": chunk_id, "block_ids": [block["block_id"]]},
+                blocks=[trial],
+                partial=partial,
+            )
+            tokens = estimate_request_tokens(
+                system, conservative=conservative
+            ) + estimate_request_tokens(user, conservative=conservative)
+            if tokens <= prompt_budget:
+                best = trial["text"]
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        final = {**block, "text": best}
+        user = self._user_prompt(
+            book=book,
+            chapter=chapter,
+            chunk={"chunk_id": chunk_id, "block_ids": [block["block_id"]]},
+            blocks=[final],
+            partial=partial,
+        )
+        tokens = estimate_request_tokens(
+            system, conservative=conservative
+        ) + estimate_request_tokens(user, conservative=conservative)
+        return [final], user, tokens
 
     def extract_chapter(
         self,
@@ -378,31 +495,32 @@ class ExtractPipeline:
                     # Touch book so status.updated_at moves and clients see activity.
                     self.db.update_book(book_id, current_chapter_id=chapter_id)
 
+                allow_ids = list(chunk.get("block_ids") or [])
+                raw_blocks = [
+                    blocks_by_id[bid] for bid in allow_ids if bid in blocks_by_id
+                ]
+                prompt_budget = self.settings.extract_prompt_token_budget()
+                chunk_blocks, user, prompt_tokens = self._fit_blocks_to_prompt_budget(
+                    book=book,
+                    chapter=chapter,
+                    system=system,
+                    blocks=raw_blocks,
+                    prompt_budget=prompt_budget,
+                    chunk_id=chunk_id,
+                    partial=len(chunks) > 1,
+                )
                 logger.info(
-                    "Extracting chunk %s/%s chapter=%s book=%s chunk_id=%s",
+                    "Extracting chunk %s/%s chapter=%s book=%s chunk_id=%s "
+                    "blocks=%s/%s prompt_tokens_est=%s budget=%s",
                     i + 1,
                     len(chunks),
                     chapter_id,
                     book_id,
                     chunk_id,
-                )
-
-                allow_ids = list(chunk.get("block_ids") or [])
-                chunk_blocks = [
-                    {
-                        "block_id": bid,
-                        "block_type": (blocks_by_id.get(bid) or {}).get("block_type"),
-                        "text": (blocks_by_id.get(bid) or {}).get("text"),
-                    }
-                    for bid in allow_ids
-                    if bid in blocks_by_id
-                ]
-                user = self._user_prompt(
-                    book=book,
-                    chapter=chapter,
-                    chunk=chunk,
-                    blocks=chunk_blocks,
-                    partial=len(chunks) > 1,
+                    len(chunk_blocks),
+                    len(raw_blocks),
+                    prompt_tokens,
+                    prompt_budget,
                 )
                 raw = self.llm.complete_json(system=system, user=user)
                 spine = self._postprocess_spine(

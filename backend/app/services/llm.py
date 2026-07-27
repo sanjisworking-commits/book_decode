@@ -113,9 +113,10 @@ def _post_json(
             detail_l = detail.lower()
             if status in (413, 429) or "rate_limit" in detail_l or "request too large" in detail_l:
                 hint = (
-                    " Request exceeded the provider token budget. For Groq free tier, set "
-                    "LLM_MAX_INPUT_TOKENS=8000 (and CHUNK_TOKEN_LIMIT=8000) so one-shot "
-                    "extract packs fewer chapter blocks per call."
+                    " Request exceeded the provider token budget. For Groq free tier, "
+                    "keep LLM_MAX_TOKENS≤8192 and LLM_MAX_INPUT_TOKENS≤8000 (0=auto). "
+                    "Extract packs the serialized prompt—not just block text—so pull "
+                    "the latest branch if you still see ~20k+ Requested tokens."
                 )
             raise LLMError(
                 f"{error_prefix} {status}: {detail or exc}.{hint}"

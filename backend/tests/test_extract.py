@@ -124,22 +124,32 @@ def test_factory_returns_mock() -> None:
 def test_oneshot_block_budget_auto_caps_groq() -> None:
     groq = Settings(
         llm_api_base="https://api.groq.com/openai/v1",
+        llm_model="llama-3.3-70b-versatile",
         chunk_token_limit=20000,
         llm_max_input_tokens=0,
     )
-    assert groq.oneshot_block_token_budget() == 8000
+    # 70% of 12k TPM → prompt budget in conservative estimator units
+    assert groq.extract_prompt_token_budget() == 8400
+    assert groq.oneshot_block_token_budget() == 8400
+    scout = Settings(
+        llm_api_base="https://api.groq.com/openai/v1",
+        llm_model="meta-llama/llama-4-scout-17b-16e-instruct",
+        llm_max_input_tokens=0,
+    )
+    assert scout.extract_prompt_token_budget() == 21000
     anthropic = Settings(
         llm_api_base="https://api.anthropic.com",
         chunk_token_limit=20000,
         llm_max_input_tokens=0,
     )
-    assert anthropic.oneshot_block_token_budget() == 20000
+    assert anthropic.extract_prompt_token_budget() == 24000
     explicit = Settings(
         llm_api_base="https://api.groq.com/openai/v1",
+        llm_model="llama-3.3-70b-versatile",
         chunk_token_limit=20000,
         llm_max_input_tokens=5000,
     )
-    assert explicit.oneshot_block_token_budget() == 5000
+    assert explicit.extract_prompt_token_budget() == 5000
 
 
 def test_http_413_mentions_input_budget_hint() -> None:

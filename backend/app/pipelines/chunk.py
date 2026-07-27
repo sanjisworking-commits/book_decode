@@ -12,6 +12,19 @@ def estimate_tokens(text: str) -> int:
     return max(1, (len(text) + 3) // 4)
 
 
+def estimate_request_tokens(text: str, *, conservative: bool = False) -> int:
+    """Estimate tokens for an LLM request payload.
+
+    When ``conservative`` is True (Groq/Llama), use ~3 chars/token — Life Ch1
+    showed chars/4 under-counting Groq's billed tokens by ~1.4×.
+    """
+    if not text:
+        return 0
+    if conservative:
+        return max(1, (len(text) + 2) // 3)
+    return estimate_tokens(text)
+
+
 def _block_tokens(block: dict[str, Any]) -> int:
     return estimate_tokens(block.get("text") or "")
 

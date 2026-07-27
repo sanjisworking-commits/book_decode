@@ -46,8 +46,8 @@ class Settings(BaseSettings):
     # Per-request HTTP timeout for LLM calls (large Argument Spine JSON can be slow).
     llm_timeout_seconds: float = 300.0
     llm_http_retries: int = 2
-    # Cap on chapter-block tokens packed into one extract request (0 = auto).
-    # Groq free llama-3.3-70b-versatile TPM is ~12k — keep blocks well under that.
+    # Cap on *full prompt* tokens (system+user) for one extract request (0 = auto).
+    # Groq free llama-3.3-70b-versatile TPM is ~12k for the whole request.
     llm_max_input_tokens: int = 0
 
     # Phase 6 validation / retries
@@ -57,22 +57,43 @@ class Settings(BaseSettings):
     # Prototype: one Anthropic call per chapter (skip multi-chunk + synth + hinglish)
     prototype_one_shot: bool = True
 
-    def oneshot_block_token_budget(self) -> int:
-        """Max estimated tokens of source blocks for one extract call.
+    def is_groq(self) -> bool:
+        return "groq.com" in (self.llm_api_base or "").lower()
 
-        Leaves headroom for the system prompt + JSON envelope so the full
-        request stays under provider TPM / request-size limits.
+    def provider_input_token_limit(self) -> int | None:
+        """Hard provider ceiling for prompt tokens when known (e.g. Groq TPM)."""
+        if not self.is_groq():
+            return None
+        model = (self.llm_model or "").lower()
+        if "scout" in model:
+            return 30000
+        if "8b" in model or "instant" in model:
+            return 6000
+        if "qwen" in model:
+            return 6000
+        # llama-3.3-70b-versatile and unknown Groq models
+        return 12000
+
+    def extract_prompt_token_budget(self) -> int:
+        """Max estimated tokens for system+user messages in one extract call.
+
+        Uses a conservative estimator for Groq (see ``estimate_request_tokens``):
+        chars/4 under-counts Llama tokenizers by ~1.4× on Life Ch1 payloads.
         """
-        chunk = max(1000, int(self.chunk_token_limit))
         explicit = int(self.llm_max_input_tokens or 0)
         if explicit > 0:
-            return max(1000, min(chunk, explicit))
+            return max(1500, explicit)
 
-        base = (self.llm_api_base or "").lower()
-        # Groq free tier for llama-3.3-70b-versatile rejects ~12k+ token requests.
-        if "groq.com" in base:
-            return max(1000, min(chunk, 8000))
-        return chunk
+        provider = self.provider_input_token_limit()
+        if provider is not None:
+            # Stay under TPM with headroom for tokenizer variance.
+            return max(1500, int(provider * 0.7))
+        # Non-Groq: generous budget; still pack by serialized prompt size.
+        return max(4000, int(self.chunk_token_limit) + 4000)
+
+    def oneshot_block_token_budget(self) -> int:
+        """Deprecated alias — prefer ``extract_prompt_token_budget`` (prompt-sized)."""
+        return self.extract_prompt_token_budget()
 
     def ensure_directories(self) -> None:
         for path in (
