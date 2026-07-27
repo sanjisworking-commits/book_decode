@@ -1,8 +1,10 @@
 /** Test-facing re-exports / mirrors of app helpers (avoids JSX transform issues). */
 export {
+  MAX_JSON_SIZE_BYTES,
   MAX_EPUB_SIZE_BYTES,
   isBookReady,
   validateEpubClient,
+  validateSourceJsonClient,
 } from "../src/lib/constants";
 
 import { isNullNode } from "../src/components/spine/nodeHelpers";

@@ -47,7 +47,7 @@ export async function uploadBook(
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    return await request<BookMetadata>("/books/upload", {
+    return await request<BookMetadata>("/books/upload-json", {
       method: "POST",
       body: form,
       signal: ctrl.signal,
@@ -55,6 +55,14 @@ export async function uploadBook(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** @deprecated Prefer uploadBook — JSON-only path. */
+export async function uploadSourceJson(
+  file: File,
+  timeoutMs = 60_000,
+): Promise<BookMetadata> {
+  return uploadBook(file, timeoutMs);
 }
 
 export async function startProcessing(bookId: string): Promise<ProcessingStatus> {

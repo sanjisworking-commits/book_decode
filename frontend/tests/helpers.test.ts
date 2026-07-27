@@ -2,27 +2,26 @@ import { describe, expect, it } from "vitest";
 import {
   isBookReady,
   isNullNodeLike,
-  validateEpubClient,
-  MAX_EPUB_SIZE_BYTES,
+  validateSourceJsonClient,
+  MAX_JSON_SIZE_BYTES,
 } from "./helpers";
 
-// Re-export thin wrappers tested via helpers to keep import path simple in tests.
-describe("validateEpubClient", () => {
-  it("rejects non-epub extension", () => {
+describe("validateSourceJsonClient", () => {
+  it("rejects non-json extension", () => {
     const file = new File(["x"], "notes.pdf", { type: "application/pdf" });
-    const err = validateEpubClient(file);
+    const err = validateSourceJsonClient(file);
     expect(err?.code).toBe("invalid_extension");
   });
 
-  it("rejects oversized epub", () => {
-    const file = new File([new Uint8Array(MAX_EPUB_SIZE_BYTES + 1)], "big.epub");
-    const err = validateEpubClient(file);
+  it("rejects oversized json", () => {
+    const file = new File([new Uint8Array(MAX_JSON_SIZE_BYTES + 1)], "big.json");
+    const err = validateSourceJsonClient(file);
     expect(err?.code).toBe("file_too_large");
   });
 
-  it("accepts small epub", () => {
-    const file = new File(["epub"], "ok.epub");
-    expect(validateEpubClient(file)).toBeNull();
+  it("accepts small json", () => {
+    const file = new File(["{}"], "ok.json");
+    expect(validateSourceJsonClient(file)).toBeNull();
   });
 });
 

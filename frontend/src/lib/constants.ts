@@ -2,10 +2,12 @@ import type { NodeType, SourceStatus } from "../types/api";
 
 export const MAX_EPUB_SIZE_MB = 50;
 export const MAX_EPUB_SIZE_BYTES = MAX_EPUB_SIZE_MB * 1024 * 1024;
+export const MAX_JSON_SIZE_MB = 50;
+export const MAX_JSON_SIZE_BYTES = MAX_JSON_SIZE_MB * 1024 * 1024;
 export const LOW_CONFIDENCE_THRESHOLD = 0.55;
 
 export const UI_STAGES: { key: string; label: string }[] = [
-  { key: "uploading", label: "Uploading EPUB" },
+  { key: "uploading", label: "Uploading source JSON" },
   { key: "reading_structure", label: "Reading book structure" },
   { key: "detecting_chapters", label: "Detecting chapters" },
   { key: "preparing_blocks", label: "Preparing chapter blocks" },
@@ -110,17 +112,23 @@ export function isChapterReady(status: string): boolean {
 }
 
 export function validateEpubClient(file: File): { code: string; message: string } | null {
+  return validateSourceJsonClient(file);
+}
+
+export function validateSourceJsonClient(
+  file: File,
+): { code: string; message: string } | null {
   const name = file.name.toLowerCase();
-  if (!name.endsWith(".epub")) {
+  if (!name.endsWith(".json")) {
     return {
       code: "invalid_extension",
-      message: "File must have a .epub extension.",
+      message: "File must have a .json extension.",
     };
   }
-  if (file.size > MAX_EPUB_SIZE_BYTES) {
+  if (file.size > MAX_JSON_SIZE_BYTES) {
     return {
       code: "file_too_large",
-      message: `EPUB exceeds the maximum size of ${MAX_EPUB_SIZE_MB} MB.`,
+      message: `JSON exceeds the maximum size of ${MAX_JSON_SIZE_MB} MB.`,
     };
   }
   return null;

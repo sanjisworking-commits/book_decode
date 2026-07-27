@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { useState } from "react";
 import { BrandHeader } from "../components/BrandHeader";
-import { MAX_EPUB_SIZE_MB } from "../lib/constants";
+import { MAX_JSON_SIZE_MB } from "../lib/constants";
 import "../styles/pages.css";
 
 export function LandingPage() {
@@ -39,16 +39,16 @@ export function LandingPage() {
             According to Logic
           </h1>
           <p className="muted" style={{ fontSize: 18, lineHeight: 1.55, margin: "0 0 24px", maxWidth: 480 }}>
-            Upload an EPUB, get a source-grounded{" "}
-            <strong style={{ color: "var(--bd-ink)", fontWeight: 600 }}>Argument Spine</strong> per
-            chapter — in English and Hindi-English.
+            Upload a clean chapter source JSON, get a source-grounded{" "}
+            <strong style={{ color: "var(--bd-ink)", fontWeight: 600 }}>Argument Spine</strong> —
+            built by the LLM from your blocks.
           </p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
             <Link to="/upload" className="btn btn-primary">
-              Decode an EPUB
+              Decode from JSON
             </Link>
             <span className="mono faint" style={{ fontSize: 12 }}>
-              .epub · up to {MAX_EPUB_SIZE_MB} MB · no DRM
+              .json · up to {MAX_JSON_SIZE_MB} MB · source_chapter
             </span>
           </div>
         </div>
@@ -98,17 +98,17 @@ export function LandingPage() {
               {
                 n: "01",
                 t: "Upload",
-                d: `Drop a DRM-free .epub under ${MAX_EPUB_SIZE_MB} MB. We read its structure and split it into chapters.`,
+                d: `Drop a clean source_chapter .json under ${MAX_JSON_SIZE_MB} MB with stable block IDs and text.`,
               },
               {
                 n: "02",
                 t: "Decode",
-                d: "Each chapter becomes a 12-node Argument Spine with provenance and source block citations.",
+                d: "The LLM builds a 12-node Argument Spine from your blocks, with provenance and citations.",
               },
               {
                 n: "03",
                 t: "Explore",
-                d: "Explore the spine in English or Hindi-English, inspect any node, and verify claims against the original text.",
+                d: "Open the Book Map and Spine, inspect any node, and verify claims against your source blocks.",
               },
             ].map((step) => (
               <div key={step.n}>

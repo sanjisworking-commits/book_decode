@@ -7,6 +7,7 @@ import uuid
 from typing import Any
 
 from app.pipelines.adapt import AdaptPipeline
+from app.pipelines.chunk import chunk_source_chapter, validate_chunk_allow_lists
 from app.pipelines.extract import ExtractPipeline
 from app.pipelines.ingest import IngestPipeline
 from app.pipelines.llm_bind import log_llm_mode
@@ -28,6 +29,7 @@ from app.schemas.api_models import (
     ProcessingStatusResponse,
 )
 from app.services.epub_validation import validate_epub_bytes
+from app.services.source_json_validation import validate_source_chapter_payload
 from app.storage.filesystem import FilesystemStore
 from app.storage.sqlite_store import SqliteStore
 from app.utils.ids import new_book_id, utc_now_iso
@@ -137,6 +139,101 @@ class BookService:
         self.fs.write_json(self.fs.metadata_path(book_id), metadata.model_dump())
         return metadata
 
+    def upload_source_json(
+        self, *, filename: str, data: bytes, max_size_bytes: int
+    ) -> BookMetadata:
+        """Accept a clean source_chapter JSON and prepare artefacts for LLM extract."""
+        import json
+
+        safe_name = filename.rsplit("/", 1)[-1] or "chapter.json"
+        if not safe_name.lower().endswith(".json"):
+            raise ValueError("invalid_extension", "File must have a .json extension.")
+        if len(data) > max_size_bytes:
+            raise ValueError(
+                "file_too_large",
+                f"JSON exceeds the maximum size of {max_size_bytes // (1024 * 1024)} MB.",
+            )
+        try:
+            raw = json.loads(data.decode("utf-8"))
+        except UnicodeDecodeError as exc:
+            raise ValueError("invalid_source_json", "JSON must be UTF-8 text.") from exc
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "invalid_source_json", f"Malformed JSON: {exc.msg} (line {exc.lineno})."
+            ) from exc
+
+        source = validate_source_chapter_payload(raw)
+        settings = getattr(self, "settings", None) or get_settings()
+
+        title_hint = source.get("chapter_title") or source.get("book_id") or "Chapter"
+        book_id = new_book_id(str(source.get("book_id") or title_hint))
+        chapter_id = source["chapter_id"]
+        source["book_id"] = book_id
+
+        chunk_plan = chunk_source_chapter(
+            source,
+            token_limit=settings.chunk_token_limit,
+            overlap_blocks=settings.chunk_overlap_blocks,
+        )
+        validate_chunk_allow_lists(source, chunk_plan)
+
+        upload_ts = utc_now_iso()
+        # Persist original bytes for audit; artefacts drive the pipeline.
+        upload_copy = self.fs.book_upload_dir(book_id) / safe_name
+        upload_copy.write_bytes(data)
+
+        self.fs.write_json(self.fs.chapter_source_path(book_id, chapter_id), source)
+        self.fs.write_json(self.fs.chapter_chunks_path(book_id, chapter_id), chunk_plan)
+
+        record = {
+            "book_id": book_id,
+            "title": source.get("chapter_title") or title_hint,
+            "author": None,
+            "epub_filename": safe_name,
+            "processing_status": BookProcessingStatus.UPLOADED.value,
+            "language": "en",
+            "chapter_count": 1,
+            "processed_chapter_count": 0,
+            "failed_chapter_count": 0,
+            "upload_timestamp": upload_ts,
+            "completion_timestamp": None,
+            "error": None,
+            "current_stage": UIStage.UPLOADING_EPUB.value,
+            "current_chapter_id": None,
+            "job_id": None,
+            "converter": "json",
+        }
+        self.db.insert_book(record)
+        self.db.replace_chapters(
+            book_id,
+            [
+                {
+                    "chapter_id": chapter_id,
+                    "title": source.get("chapter_title") or chapter_id,
+                    "chapter_number": source.get("chapter_number") or 1,
+                    "order_index": 0,
+                    "status": ChapterStatus.PENDING.value,
+                    "retry_count": 0,
+                    "error": None,
+                    "preview": {
+                        "block_count": len(source["source_blocks"]),
+                        "chunk_count": len(chunk_plan.get("chunks") or []),
+                        "chunk_strategy": chunk_plan.get("strategy"),
+                        "source": "json_upload",
+                    },
+                }
+            ],
+        )
+        metadata = self._to_metadata(record)
+        self.fs.write_json(self.fs.metadata_path(book_id), metadata.model_dump())
+        logger.info(
+            "JSON source uploaded book=%s chapter=%s blocks=%s",
+            book_id,
+            chapter_id,
+            len(source["source_blocks"]),
+        )
+        return metadata
+
     def start_processing(self, book_id: str) -> ProcessingStatusResponse:
         book = self.db.get_book(book_id)
         if not book:
@@ -172,7 +269,37 @@ class BookService:
         self._refresh_llm_clients()
         settings = getattr(self, "settings", None) or get_settings()
         oneshot = bool(settings.prototype_one_shot)
-        self.ingest.run(book_id)
+
+        book = self.db.get_book(book_id)
+        if not book:
+            return
+
+        if book.get("converter") == "json":
+            # Artefacts already written at upload — skip Docling/normalise.
+            logger.info("JSON ingest skip Docling book=%s", book_id)
+            if not self.db.list_chapters(book_id):
+                self.validate_persist._fail_book(
+                    book, book.get("job_id"), "No chapters available for JSON book."
+                )
+                return
+            chapter_id = self.db.list_chapters(book_id)[0]["chapter_id"]
+            if not self.fs.chapter_source_path(book_id, chapter_id).exists():
+                self.validate_persist._fail_book(
+                    book,
+                    book.get("job_id"),
+                    "Missing source JSON artefact for JSON book.",
+                )
+                return
+            self.db.update_book(
+                book_id,
+                processing_status=BookProcessingStatus.PREPARING_BLOCKS.value,
+                current_stage=UIStage.PREPARING_CHAPTER_BLOCKS.value,
+                chapter_count=len(self.db.list_chapters(book_id)),
+                error=None,
+            )
+        else:
+            self.ingest.run(book_id)
+
         book = self.db.get_book(book_id)
         if not book:
             return

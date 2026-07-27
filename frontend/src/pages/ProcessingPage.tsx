@@ -167,7 +167,7 @@ export function ProcessingPage() {
         {failed && (
           <>
             <Link to="/upload" className="btn btn-secondary">
-              Upload a different EPUB
+              Upload a different JSON
             </Link>
             <button
               type="button"

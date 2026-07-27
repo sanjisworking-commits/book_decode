@@ -6,7 +6,7 @@ import {
   UploadDropzone,
   type UploadUiState,
 } from "../components/UploadDropzone";
-import { validateEpubClient } from "../lib/constants";
+import { validateSourceJsonClient } from "../lib/constants";
 import { startProcessing, uploadBook } from "../services/api";
 import { ApiError } from "../types/api";
 
@@ -61,7 +61,7 @@ export function UploadPage() {
   }, []);
 
   async function handleFile(file: File) {
-    const clientErr = validateEpubClient(file);
+    const clientErr = validateSourceJsonClient(file);
     const meta = describeFile(file);
     if (clientErr) {
       setState({
@@ -126,7 +126,7 @@ export function UploadPage() {
         Upload
       </div>
       <h1 style={{ fontSize: 28, fontWeight: 600, letterSpacing: "-0.02em", margin: "0 0 8px" }}>
-        Add an EPUB to decode
+        Add source JSON to decode
       </h1>
       <p className="muted" style={{ margin: "0 0 22px", lineHeight: 1.5 }}>
         We validate the file, then start the Argument Spine pipeline.

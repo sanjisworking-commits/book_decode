@@ -11,7 +11,7 @@ describe("UploadDropzone", () => {
         <UploadDropzone state={{ kind: "idle" }} onFile={() => undefined} />
       </MemoryRouter>,
     );
-    expect(screen.getByText(/Drop your EPUB here/i)).toBeInTheDocument();
+    expect(screen.getByText(/Drop your source JSON here/i)).toBeInTheDocument();
     expect(screen.getByText(/max 50 MB/i)).toBeInTheDocument();
   });
 
@@ -38,9 +38,9 @@ describe("UploadDropzone", () => {
       <UploadDropzone state={{ kind: "idle" }} onFile={onFile} />,
     );
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
-    const file = new File(["x"], "book.epub", { type: "application/epub+zip" });
+    const file = new File(["{}"], "chapter.json", { type: "application/json" });
     await user.upload(input, file);
     expect(onFile).toHaveBeenCalledTimes(1);
-    expect(onFile.mock.calls[0][0].name).toBe("book.epub");
+    expect(onFile.mock.calls[0][0].name).toBe("chapter.json");
   });
 });

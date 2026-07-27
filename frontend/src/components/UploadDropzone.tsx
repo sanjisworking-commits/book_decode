@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { formatBytes, MAX_EPUB_SIZE_MB } from "../lib/constants";
+import { formatBytes, MAX_JSON_SIZE_MB } from "../lib/constants";
 
 export type UploadUiState =
   | { kind: "idle" }
@@ -17,19 +17,15 @@ type Props = {
 const ERROR_COPY: Record<string, { title: string; body: string }> = {
   invalid_extension: {
     title: "Wrong file type",
-    body: "Only DRM-free .epub files are accepted.",
+    body: "Only clean source_chapter .json files are accepted.",
   },
   file_too_large: {
     title: "This file is too large",
-    body: `EPUBs must be under ${MAX_EPUB_SIZE_MB} MB. Try a version without embedded media.`,
+    body: `JSON must be under ${MAX_JSON_SIZE_MB} MB.`,
   },
-  corrupt_epub: {
-    title: "Couldn’t open this EPUB",
-    body: "The archive looks corrupt or incomplete. Re-export or re-download, then try again.",
-  },
-  drm_detected: {
-    title: "This EPUB appears DRM-protected",
-    body: "We can’t decode DRM-locked books. Export a DRM-free copy and try again.",
+  invalid_source_json: {
+    title: "Invalid source JSON",
+    body: "The file must match the source_chapter shape (chapter_id, source_blocks with block_id / block_type / text).",
   },
   upload_timeout: {
     title: "Upload timed out",
@@ -37,7 +33,7 @@ const ERROR_COPY: Record<string, { title: string; body: string }> = {
   },
   upload_failed: {
     title: "Upload failed",
-    body: "Could not upload this EPUB to the API.",
+    body: "Could not upload this JSON to the API.",
   },
 };
 
@@ -91,7 +87,7 @@ export function UploadDropzone({ state, onFile, onClearError, disabled }: Props)
       <input
         ref={inputRef}
         type="file"
-        accept=".epub,application/epub+zip"
+        accept=".json,application/json"
         className="sr-only"
         disabled={disabled || state.kind === "uploading"}
         onChange={(e) => {
@@ -103,10 +99,10 @@ export function UploadDropzone({ state, onFile, onClearError, disabled }: Props)
       {state.kind === "idle" && (
         <>
           <div style={{ fontSize: 28, fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 10 }}>
-            Drop your EPUB here
+            Drop your source JSON here
           </div>
           <div className="muted" style={{ marginBottom: 18, lineHeight: 1.5 }}>
-            We’ll extract chapters and build a source-grounded Argument Spine.
+            Clean chapter blocks go to the LLM to build a source-grounded Argument Spine.
           </div>
           <button
             type="button"
@@ -114,10 +110,10 @@ export function UploadDropzone({ state, onFile, onClearError, disabled }: Props)
             disabled={disabled}
             onClick={() => inputRef.current?.click()}
           >
-            Choose EPUB
+            Choose JSON
           </button>
           <div className="eyebrow" style={{ marginTop: 16 }}>
-            .epub only · max {MAX_EPUB_SIZE_MB} MB · no DRM
+            .json only · max {MAX_JSON_SIZE_MB} MB · source_chapter schema
           </div>
         </>
       )}
