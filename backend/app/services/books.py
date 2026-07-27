@@ -746,8 +746,14 @@ class BookService:
     def retry_chapter(
         self, book_id: str, chapter_id: str, *, force: bool = False
     ) -> ProcessingStatusResponse:
-        """Re-queue validation/repair for a failed chapter (Phase 6)."""
+        """Re-decode a failed chapter (extract → validate), not validate-only.
+
+        Validate-only retry fails with "No spine artefact found for validation"
+        when extraction never wrote a spine (the common oneshot / JSON failure).
+        """
         self._refresh_llm_clients()
+        settings = getattr(self, "settings", None) or get_settings()
+        oneshot = bool(settings.prototype_one_shot)
         book = self.db.get_book(book_id)
         if not book:
             raise KeyError(book_id)
@@ -778,14 +784,75 @@ class BookService:
         self.db.replace_chapters(book_id, updated)
         self.db.update_book(
             book_id,
-            processing_status=BookProcessingStatus.VALIDATING.value,
-            current_stage=UIStage.VALIDATING_OUTPUT.value,
+            processing_status=BookProcessingStatus.ANALYSING_CHAPTERS.value,
+            current_stage=UIStage.ANALYSING_CHAPTERS.value,
             current_chapter_id=chapter_id,
+            error=None,
+            completion_timestamp=None,
         )
 
-        result = self.validate_persist.validate_chapter(
-            book_id, chapter_id, force=force
-        )
+        ch = next(c for c in self.db.list_chapters(book_id) if c["chapter_id"] == chapter_id)
+        book = self.db.get_book(book_id) or book
+
+        if oneshot:
+            extract_result = self.extract.extract_chapter_oneshot(
+                book_id, ch, book=book
+            )
+            ch = {**extract_result["chapter"], "retry_count": retry_count + 1}
+            updated = self._merge_chapter(book_id, chapter_id, ch)
+            if ch.get("status") == ChapterStatus.FAILED.value:
+                result = {"chapter": ch, "summary": extract_result["summary"]}
+            else:
+                self.db.update_book(
+                    book_id,
+                    processing_status=BookProcessingStatus.VALIDATING.value,
+                    current_stage=UIStage.VALIDATING_OUTPUT.value,
+                    current_chapter_id=chapter_id,
+                )
+                validate_result = self.validate_persist.validate_chapter_soft(
+                    book_id, chapter_id, chapter=ch
+                )
+                ch = {**validate_result["chapter"], "retry_count": retry_count + 1}
+                updated = self._merge_chapter(book_id, chapter_id, ch)
+                result = {"chapter": ch, "summary": validate_result["summary"]}
+        else:
+            extract_result = self.extract.extract_chapter(book_id, ch, book=book)
+            ch = {**extract_result["chapter"], "retry_count": retry_count + 1}
+            updated = self._merge_chapter(book_id, chapter_id, ch)
+            if ch.get("status") == ChapterStatus.FAILED.value:
+                result = {"chapter": ch, "summary": extract_result["summary"]}
+            else:
+                synth_result = self.synthesise.synthesise_chapter(
+                    book_id, ch, book=self.db.get_book(book_id) or book
+                )
+                ch = {**synth_result["chapter"], "retry_count": retry_count + 1}
+                updated = self._merge_chapter(book_id, chapter_id, ch)
+                if ch.get("status") == ChapterStatus.FAILED.value:
+                    result = {"chapter": ch, "summary": synth_result["summary"]}
+                else:
+                    adapt_result = self.adapt.adapt_chapter(book_id, ch)
+                    ch = {**adapt_result["chapter"], "retry_count": retry_count + 1}
+                    updated = self._merge_chapter(book_id, chapter_id, ch)
+                    if ch.get("status") == ChapterStatus.FAILED.value:
+                        result = {"chapter": ch, "summary": adapt_result["summary"]}
+                    else:
+                        self.db.update_book(
+                            book_id,
+                            processing_status=BookProcessingStatus.VALIDATING.value,
+                            current_stage=UIStage.VALIDATING_OUTPUT.value,
+                            current_chapter_id=chapter_id,
+                        )
+                        validate_result = self.validate_persist.validate_chapter(
+                            book_id, chapter_id, chapter=ch, force=force
+                        )
+                        ch = {
+                            **validate_result["chapter"],
+                            "retry_count": retry_count + 1,
+                        }
+                        updated = self._merge_chapter(book_id, chapter_id, ch)
+                        result = {"chapter": ch, "summary": validate_result["summary"]}
+
+        self._refresh_progress_counts(book_id, updated)
         # Merge result back into chapter list
         final_chapters = []
         for c in self.db.list_chapters(book_id):
