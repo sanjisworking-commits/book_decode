@@ -10,7 +10,14 @@ from fastapi.testclient import TestClient
 def test_health(client: TestClient) -> None:
     res = client.get("/health")
     assert res.status_code == 200
-    assert res.json()["phase"] == "6"
+    body = res.json()
+    assert body["phase"] == "6"
+    assert "llm_mock" in body
+    assert "llm_provider" in body
+    assert "llm_api_key_configured" in body
+    # conftest forces LLM_MOCK for API tests
+    assert body["llm_mock"] is True
+    assert body["llm_provider"] == "mock"
 
 
 def test_upload_rejects_bad_extension(client: TestClient, mini_epub_bytes: bytes) -> None:
@@ -71,14 +78,15 @@ def test_upload_and_process_completes_validated_spine(
     spine = client.get(f"/books/{book_id}/chapters/{chapter_id}/spine")
     assert spine.status_code == 200, spine.text
     body = spine.json()
-    assert body["language_modes"] == ["en", "hinglish"]
+    # Default PROTOTYPE_ONE_SHOT soft path is English-only (hinglish skipped).
+    assert body["language_modes"] == ["en"]
+    assert body.get("schema_version") in {"1.0", "2.0"}
     assert body.get("nodes")
     assert body.get("validation", {}).get("schema_valid") is True
     assert body.get("validation", {}).get("source_refs_valid") is True
     for node in body["nodes"]:
         assert set(node.get("source_block_ids") or []).issubset(allowed)
-        if node.get("statement_en"):
-            assert node.get("statement_hinglish")
+        assert node.get("statement_hinglish") is None
 
 
 def test_process_unknown_book(client: TestClient) -> None:
@@ -95,3 +103,77 @@ def test_delete_book(client: TestClient, mini_epub_bytes: bytes) -> None:
     deleted = client.delete(f"/books/{book_id}")
     assert deleted.status_code == 204
     assert client.get(f"/books/{book_id}").status_code == 404
+
+
+def test_progressive_first_chapter_completes_before_later(
+    client: TestClient, mini_epub_bytes: bytes, monkeypatch
+) -> None:
+    """CH01 should reach completed while later chapters are still pending."""
+    from app.services.books import BookService
+
+    snapshots: list[dict] = []
+    original = BookService._refresh_progress_counts
+
+    def spy(self, book_id, chapters):  # type: ignore[no-untyped-def]
+        original(self, book_id, chapters)
+        snapshots.append(
+            {
+                "processed": sum(1 for c in chapters if c["status"] == "completed"),
+                "statuses": {c["chapter_id"]: c["status"] for c in chapters},
+            }
+        )
+
+    monkeypatch.setattr(BookService, "_refresh_progress_counts", spy)
+
+    upload = client.post(
+        "/books/upload",
+        files={"file": ("mini.epub", mini_epub_bytes, "application/epub+zip")},
+    )
+    assert upload.status_code == 201, upload.text
+    book_id = upload.json()["book_id"]
+
+    process = client.post(f"/books/{book_id}/process")
+    assert process.status_code == 202, process.text
+
+    deadline = time.time() + 120
+    status = None
+    while time.time() < deadline:
+        status_res = client.get(f"/books/{book_id}/status")
+        assert status_res.status_code == 200
+        status = status_res.json()
+        if status["processing_status"] in {
+            "completed",
+            "completed_with_errors",
+            "failed",
+        }:
+            break
+        time.sleep(0.5)
+
+    assert status is not None
+    assert status["processing_status"] != "failed", status
+    assert status["chapter_count"] >= 2
+    assert status["processed_chapter_count"] >= 2
+
+    # At least one mid-pipeline snapshot had exactly one completed chapter
+    # while another chapter was not yet completed.
+    progressive = [
+        s
+        for s in snapshots
+        if s["processed"] == 1
+        and any(st != "completed" for st in s["statuses"].values())
+    ]
+    assert progressive, f"expected progressive unlock snapshots, got {snapshots}"
+
+    # First chapter in order should be the one that completed first
+    first_ready = next(
+        cid
+        for cid, st in progressive[0]["statuses"].items()
+        if st == "completed"
+    )
+    chapters = client.get(f"/books/{book_id}/chapters").json()["chapters"]
+    assert chapters[0]["chapter_id"] == first_ready or first_ready in {
+        c["chapter_id"] for c in chapters if c["status"] == "completed"
+    }
+    # Spine for the early-ready chapter must be readable
+    spine = client.get(f"/books/{book_id}/chapters/{first_ready}/spine")
+    assert spine.status_code == 200, spine.text

@@ -61,6 +61,10 @@ class FilesystemStore:
         safe = chunk_id.replace("/", "_")
         return self.chapters_dir(book_id) / f"{chapter_id}.spine.partial.{safe}.json"
 
+    def chapter_discovery_path(self, book_id: str, chapter_id: str) -> Path:
+        """Pass-1 Argument Discovery artefact (adaptive two-pass extraction)."""
+        return self.chapters_dir(book_id) / f"{chapter_id}.discovery.json"
+
     def chapter_spine_candidate_path(self, book_id: str, chapter_id: str) -> Path:
         """English spine candidate after Phase 3–4 (full spine after synthesis)."""
         return self.chapters_dir(book_id) / f"{chapter_id}.spine.candidate.json"

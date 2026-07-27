@@ -7,16 +7,19 @@ import logging
 import time
 from typing import Any
 
-from app.config import Settings, get_settings
+from app.config import Settings
 from app.domain.enums import BookProcessingStatus, ChapterStatus, UIStage
 from app.pipelines.align_spine import check_bilingual_alignment
+from app.pipelines.llm_bind import bind_llm
 from app.pipelines.validate_spine import (
+    strip_invalid_relations,
     strip_invalid_source_refs,
+    validate_relations,
     validate_source_refs,
     validate_spine_schema,
 )
 from app.prompts.loader import load_prompt
-from app.services.llm import LLMError, get_llm_client, resolve_llm_settings
+from app.services.llm import LLMError
 from app.storage.filesystem import FilesystemStore
 from app.storage.sqlite_store import SqliteStore
 from app.utils.ids import utc_now_iso
@@ -32,9 +35,12 @@ class ValidatePersistPipeline:
     ) -> None:
         self.db = db
         self.fs = fs
-        raw = settings or get_settings()
-        self.settings = resolve_llm_settings(raw) if not raw.llm_mock else raw
-        self.llm = get_llm_client(raw)
+        self.settings, self.llm = bind_llm(settings)
+        self.max_retries = max(0, int(self.settings.max_chapter_retries))
+        self.backoff = float(self.settings.retry_backoff_seconds)
+
+    def reload_llm(self, settings: Settings | None = None) -> None:
+        self.settings, self.llm = bind_llm(settings)
         self.max_retries = max(0, int(self.settings.max_chapter_retries))
         self.backoff = float(self.settings.retry_backoff_seconds)
 
@@ -76,6 +82,147 @@ class ValidatePersistPipeline:
 
         self.db.replace_chapters(book_id, updated)
         self._finalise_book(book, job_id, updated, summaries)
+
+    def validate_chapter_soft(
+        self,
+        book_id: str,
+        chapter_id: str,
+        *,
+        chapter: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Light EN-only validate/persist for prototype one-shot spines.
+
+        Strips bad source refs, requires nodes, skips bilingual alignment when
+        hinglish is absent, and does not LLM-repair. Minor schema noise is
+        tolerated so the Book Map / Spine UI can open a demo spine.
+        """
+        chapters = {c["chapter_id"]: c for c in self.db.list_chapters(book_id)}
+        ch = chapter or chapters.get(chapter_id)
+        if not ch:
+            raise KeyError(chapter_id)
+
+        try:
+            source = self.fs.read_json(self.fs.chapter_source_path(book_id, chapter_id))
+            allowed = {b["block_id"] for b in (source.get("source_blocks") or [])}
+            spine = self._load_spine(book_id, chapter_id)
+        except Exception as exc:
+            failed = {
+                **ch,
+                "status": ChapterStatus.FAILED.value,
+                "error": {
+                    "code": "validation_failed",
+                    "message": str(exc),
+                    "details": {"mode": "soft"},
+                },
+            }
+            return {
+                "chapter": failed,
+                "summary": {
+                    "chapter_id": chapter_id,
+                    "ok": False,
+                    "reason": str(exc),
+                    "mode": "soft",
+                },
+            }
+
+        working = {
+            **ch,
+            "status": ChapterStatus.VALIDATING.value,
+            "error": None,
+        }
+        spine = strip_invalid_source_refs(spine, allowed)
+        spine = strip_invalid_relations(spine, allowed)
+        spine["language_modes"] = ["en"]
+        for node in spine.get("nodes") or []:
+            node.setdefault("statement_hinglish", None)
+            node.setdefault("explanation_hinglish", None)
+
+        nodes = spine.get("nodes") or []
+        if not nodes:
+            failed = {
+                **working,
+                "status": ChapterStatus.FAILED.value,
+                "error": {
+                    "code": "validation_failed",
+                    "message": "Soft validation: spine has no nodes.",
+                    "details": {"mode": "soft"},
+                },
+            }
+            return {
+                "chapter": failed,
+                "summary": {
+                    "chapter_id": chapter_id,
+                    "ok": False,
+                    "reason": "no_nodes",
+                    "mode": "soft",
+                },
+            }
+
+        schema_errors = validate_spine_schema(spine)
+        ref_errors = validate_source_refs(spine, allowed)
+        rel_errors = validate_relations(spine, allowed)
+        # Soft demo path: keep spine even with minor schema noise; UI can still open.
+
+        now = utc_now_iso()
+        notes = (spine.get("confidence_summary") or {}).get("notes") or ""
+        if schema_errors:
+            notes = (notes + " | soft_schema_warnings: " + "; ".join(schema_errors[:5])).strip(
+                " |"
+            )
+        if ref_errors:
+            notes = (notes + " | soft_ref_warnings: " + "; ".join(ref_errors[:5])).strip(" |")
+        if rel_errors:
+            notes = (notes + " | soft_relation_warnings: " + "; ".join(rel_errors[:5])).strip(
+                " |"
+            )
+        spine["confidence_summary"] = {
+            "overall": (spine.get("confidence_summary") or {}).get("overall"),
+            "notes": notes,
+        }
+        prev = spine.get("processing") if isinstance(spine.get("processing"), dict) else {}
+        spine["processing"] = {
+            "model": prev.get("model")
+            or (self.settings.llm_model if not self.settings.llm_mock else "mock"),
+            "prompt_versions": dict(prev.get("prompt_versions") or {}),
+            "created_at": prev.get("created_at") or now,
+            "updated_at": now,
+        }
+        spine["validation"] = {
+            "schema_valid": len(schema_errors) == 0,
+            "source_refs_valid": len(ref_errors) == 0,
+            "relations_valid": len(rel_errors) == 0,
+            "bilingual_aligned": False,
+            "checked_at": now,
+            "mode": "soft",
+        }
+
+        self.fs.write_json(self.fs.chapter_spine_en_path(book_id, chapter_id), spine)
+        self.fs.write_json(self.fs.chapter_spine_path(book_id, chapter_id), spine)
+        self.fs.write_json(self.fs.chapter_spine_candidate_path(book_id, chapter_id), spine)
+
+        completed = {
+            **working,
+            "status": ChapterStatus.COMPLETED.value,
+            "error": None,
+            "preview": {
+                **(working.get("preview") or {}),
+                "validation": "soft_ok",
+                "repair_attempts": 0,
+                "node_count": len(nodes),
+                "schema_warnings": len(schema_errors),
+            },
+        }
+        return {
+            "chapter": completed,
+            "summary": {
+                "chapter_id": chapter_id,
+                "ok": True,
+                "mode": "soft",
+                "node_count": len(nodes),
+                "schema_warnings": schema_errors[:5],
+                "path": str(self.fs.chapter_spine_path(book_id, chapter_id)),
+            },
+        }
 
     def validate_chapter(
         self,
@@ -141,16 +288,26 @@ class ValidatePersistPipeline:
         while True:
             schema_errors = validate_spine_schema(spine)
             ref_errors = validate_source_refs(spine, allowed)
+            rel_errors = validate_relations(spine, allowed)
             align_errors: list[str] = []
             en_path = self.fs.chapter_spine_en_path(book_id, chapter_id)
-            if en_path.exists() and "hinglish" in (spine.get("language_modes") or []):
+            # Skip bilingual alignment when hinglish mode is absent (prototype EN-only).
+            if (
+                en_path.exists()
+                and "hinglish" in (spine.get("language_modes") or [])
+            ):
                 try:
                     english = self.fs.read_json(en_path)
                     align_errors = check_bilingual_alignment(english, spine)
                 except Exception:
                     align_errors = ["could_not_check_bilingual_alignment"]
 
-            if not schema_errors and not ref_errors and not align_errors:
+            if (
+                not schema_errors
+                and not ref_errors
+                and not rel_errors
+                and not align_errors
+            ):
                 final = self._mark_valid(spine, attempts=attempts)
                 self.fs.write_json(self.fs.chapter_spine_path(book_id, chapter_id), final)
                 self.fs.write_json(
@@ -178,7 +335,7 @@ class ValidatePersistPipeline:
                     },
                 }
 
-            last_errors = schema_errors + ref_errors + align_errors
+            last_errors = schema_errors + ref_errors + rel_errors + align_errors
             if attempts >= self.max_retries:
                 break
 
@@ -194,12 +351,16 @@ class ValidatePersistPipeline:
                 if schema_errors:
                     spine = self._repair_schema(spine, schema_errors)
                     spine = strip_invalid_source_refs(spine, allowed)
+                    spine = strip_invalid_relations(spine, allowed)
                 elif ref_errors:
                     # Deterministic strip first, then LLM repair if still dirty
                     spine = strip_invalid_source_refs(spine, allowed)
                     still = validate_source_refs(spine, allowed)
                     if still:
                         spine = self._repair_sources(spine, allowed, still)
+                    spine = strip_invalid_relations(spine, allowed)
+                elif rel_errors:
+                    spine = strip_invalid_relations(spine, allowed)
                 elif align_errors:
                     # Restore hinglish overlay from English if alignment broke
                     if en_path.exists():
@@ -289,6 +450,7 @@ class ValidatePersistPipeline:
         out["validation"] = {
             "schema_valid": True,
             "source_refs_valid": True,
+            "relations_valid": True,
             "bilingual_aligned": "hinglish" in (out.get("language_modes") or []),
             "checked_at": now,
         }
@@ -316,7 +478,10 @@ class ValidatePersistPipeline:
         # Preserve identity fields
         repaired["book_id"] = spine.get("book_id") or repaired.get("book_id")
         repaired["chapter_id"] = spine.get("chapter_id") or repaired.get("chapter_id")
-        repaired["schema_version"] = "1.0"
+        repaired["schema_version"] = spine.get("schema_version") or repaired.get(
+            "schema_version"
+        ) or "2.0"
+        repaired = strip_invalid_relations(repaired)
         if not repaired.get("language_modes"):
             repaired["language_modes"] = spine.get("language_modes") or ["en"]
         prev = repaired.get("processing") if isinstance(repaired.get("processing"), dict) else {}
@@ -358,9 +523,12 @@ class ValidatePersistPipeline:
         )
         repaired = self.llm.complete_json(system=system, user=user)
         repaired = strip_invalid_source_refs(repaired, allowed)
+        repaired = strip_invalid_relations(repaired, allowed)
         repaired["book_id"] = spine.get("book_id") or repaired.get("book_id")
         repaired["chapter_id"] = spine.get("chapter_id") or repaired.get("chapter_id")
-        repaired["schema_version"] = "1.0"
+        repaired["schema_version"] = spine.get("schema_version") or repaired.get(
+            "schema_version"
+        ) or "2.0"
         prev = repaired.get("processing") if isinstance(repaired.get("processing"), dict) else {}
         versions = dict(prev.get("prompt_versions") or {})
         versions["source_validation"] = f"6.0.0:{prompt_hash}"

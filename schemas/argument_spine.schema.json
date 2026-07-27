@@ -12,7 +12,7 @@
     "nodes"
   ],
   "properties": {
-    "schema_version": { "type": "string", "const": "1.0" },
+    "schema_version": { "type": "string", "enum": ["1.0", "2.0"] },
     "book_id": { "type": "string", "minLength": 1 },
     "chapter_id": { "type": "string", "minLength": 1 },
     "language_modes": {
@@ -24,6 +24,10 @@
       "type": "array",
       "minItems": 1,
       "items": { "$ref": "#/$defs/spineNode" }
+    },
+    "relations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/spineRelation" }
     },
     "confidence_summary": {
       "type": ["object", "null"],
@@ -43,7 +47,11 @@
           "additionalProperties": { "type": "string" }
         },
         "created_at": { "type": ["string", "null"], "format": "date-time" },
-        "updated_at": { "type": ["string", "null"], "format": "date-time" }
+        "updated_at": { "type": ["string", "null"], "format": "date-time" },
+        "token_usage": {
+          "type": ["object", "null"],
+          "additionalProperties": true
+        }
       }
     },
     "validation": {
@@ -53,7 +61,9 @@
         "schema_valid": { "type": "boolean" },
         "source_refs_valid": { "type": "boolean" },
         "bilingual_aligned": { "type": "boolean" },
-        "checked_at": { "type": ["string", "null"], "format": "date-time" }
+        "relations_valid": { "type": "boolean" },
+        "checked_at": { "type": ["string", "null"], "format": "date-time" },
+        "mode": { "type": ["string", "null"] }
       }
     }
   },
@@ -74,34 +84,72 @@
         "node_type": {
           "type": "string",
           "enum": [
+            "chapter_objective",
             "chapter_question",
             "central_claim",
+            "organising_idea",
+            "supporting_claim",
+            "reasoning_step",
             "reasoning_steps",
+            "definition",
+            "evidence",
+            "example",
+            "analogy",
+            "quotation",
             "evidence_and_examples",
+            "assumption",
             "hidden_assumptions",
+            "qualification",
+            "objection",
+            "response",
+            "implication",
+            "consequence_if_correct",
+            "narrative_context",
+            "historical_context",
+            "transition",
             "tensions_or_gaps",
             "strongest_counter_position",
-            "consequence_if_correct",
             "role_in_book",
             "one_sentence_decode",
+            "unresolved_question",
             "confidence_and_unresolved",
             "source_block_references"
           ]
         },
+        "custom_label": { "type": ["string", "null"] },
         "statement_en": { "type": ["string", "null"] },
         "explanation_en": { "type": ["string", "null"] },
         "statement_hinglish": { "type": ["string", "null"] },
         "explanation_hinglish": { "type": ["string", "null"] },
+        "claim_level": { "type": ["string", "null"] },
+        "importance": { "type": ["string", "null"] },
+        "position_owner": { "type": ["string", "null"] },
+        "narrating_voice": { "type": ["string", "null"] },
         "source_status": {
           "type": "string",
           "enum": [
             "explicit_author",
             "author_paraphrase",
             "ai_inference",
-            "external_counter"
+            "external_counter",
+            "quoted_position",
+            "source_based_inference",
+            "source_based_objection"
           ]
         },
         "source_block_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "scope_qualifiers": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "supports_node_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "supports_claim_ids": {
           "type": "array",
           "items": { "type": "string" }
         },
@@ -110,6 +158,37 @@
         "prev_id": { "type": ["string", "null"] },
         "next_id": { "type": ["string", "null"] },
         "warnings": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "spineRelation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from_node_id", "to_node_id", "relation_type"],
+      "properties": {
+        "from_node_id": { "type": "string", "minLength": 1 },
+        "to_node_id": { "type": "string", "minLength": 1 },
+        "relation_type": {
+          "type": "string",
+          "enum": [
+            "supports",
+            "explains",
+            "provides_evidence_for",
+            "illustrates",
+            "defines",
+            "qualifies",
+            "challenges",
+            "responds_to",
+            "depends_on",
+            "leads_to",
+            "contrasts_with",
+            "provides_context_for"
+          ]
+        },
+        "explanation_en": { "type": ["string", "null"] },
+        "source_block_ids": {
           "type": "array",
           "items": { "type": "string" }
         }

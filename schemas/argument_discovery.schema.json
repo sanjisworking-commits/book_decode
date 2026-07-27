@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://accordingtologic.local/schemas/argument_discovery.schema.json",
+  "title": "ArgumentDiscovery",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "book_id",
+    "chapter_id",
+    "chapter_types",
+    "argument_movements",
+    "claims",
+    "supporting_material",
+    "recommended_node_types",
+    "omit_or_deemphasize"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "enum": ["1.0"] },
+    "book_id": { "type": "string", "minLength": 1 },
+    "chapter_id": { "type": "string", "minLength": 1 },
+    "chapter_types": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "theoretical_argument",
+          "conceptual_framework",
+          "historical_explanation",
+          "comparative_argument",
+          "evidence_review",
+          "narrative_supported_argument",
+          "procedural_explanation",
+          "descriptive_explanation",
+          "mixed"
+        ]
+      }
+    },
+    "chapter_objective": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "properties": {
+        "statement": { "type": ["string", "null"] },
+        "source_block_ids": { "type": "array", "items": { "type": "string" } },
+        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+      }
+    },
+    "central_problem": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "properties": {
+        "statement": { "type": ["string", "null"] },
+        "source_block_ids": { "type": "array", "items": { "type": "string" } },
+        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+      }
+    },
+    "argument_movements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["movement_id", "order"],
+        "properties": {
+          "movement_id": { "type": "string" },
+          "title": { "type": ["string", "null"] },
+          "function": { "type": ["string", "null"] },
+          "description": { "type": ["string", "null"] },
+          "source_block_ids": { "type": "array", "items": { "type": "string" } },
+          "order": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["claim_id", "statement"],
+        "properties": {
+          "claim_id": { "type": "string" },
+          "statement": { "type": "string" },
+          "claim_level": { "type": ["string", "null"] },
+          "position_owner": { "type": ["string", "null"] },
+          "source_status": { "type": ["string", "null"] },
+          "source_block_ids": { "type": "array", "items": { "type": "string" } },
+          "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+        }
+      }
+    },
+    "supporting_material": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["item_id", "material_type", "statement"],
+        "properties": {
+          "item_id": { "type": "string" },
+          "material_type": { "type": "string" },
+          "statement": { "type": "string" },
+          "supports_claim_ids": { "type": "array", "items": { "type": "string" } },
+          "source_block_ids": { "type": "array", "items": { "type": "string" } },
+          "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+        }
+      }
+    },
+    "objections_and_limits": { "type": "array" },
+    "position_owners": { "type": "array" },
+    "recommended_node_types": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "omit_or_deemphasize": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "unresolved_questions": { "type": "array" },
+    "confidence_summary": {
+      "type": ["object", "null"],
+      "additionalProperties": true
+    },
+    "conflicts": {
+      "type": "array",
+      "items": { "type": "object", "additionalProperties": true }
+    }
+  }
+}

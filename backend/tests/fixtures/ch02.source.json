@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.0",
+  "book_id": "fixture-book",
+  "chapter_id": "ch02",
+  "chapter_number": 2,
+  "chapter_title": "Chapter 2 — Fixture Argument",
+  "heading_hierarchy": ["Chapter 2"],
+  "source_blocks": [
+    {
+      "block_id": "fixture-book.ch02.sec01.block001",
+      "block_type": "heading",
+      "text": "Chapter 2 — Organising the argument",
+      "order_index": 0,
+      "section_id": "sec01"
+    },
+    {
+      "block_id": "fixture-book.ch02.sec01.block002",
+      "block_type": "paragraph",
+      "text": "This chapter argues that a clear organising idea can structure how readers track claims, evidence, and objections without inventing external criticism.",
+      "order_index": 1,
+      "section_id": "sec01"
+    },
+    {
+      "block_id": "fixture-book.ch02.sec01.block003",
+      "block_type": "paragraph",
+      "text": "First, the author states a central claim: understanding depends on relating parts of an argument to one another rather than listing isolated facts.",
+      "order_index": 2,
+      "section_id": "sec01"
+    },
+    {
+      "block_id": "fixture-book.ch02.sec01.block004",
+      "block_type": "paragraph",
+      "text": "Supporting evidence includes a worked example where a reader recovers the claim only after seeing how a qualification limits its scope.",
+      "order_index": 3,
+      "section_id": "sec01"
+    },
+    {
+      "block_id": "fixture-book.ch02.sec01.block005",
+      "block_type": "paragraph",
+      "text": "An interlocutor in the source objects that structure may overfit messy prose. The author responds that adaptive node types omit empty slots instead of inventing fillers.",
+      "order_index": 4,
+      "section_id": "sec01"
+    },
+    {
+      "block_id": "fixture-book.ch02.sec01.block006",
+      "block_type": "paragraph",
+      "text": "Therefore the chapter's implication is methodological: prefer source-grounded objections and quoted positions over external counters in the first decode pass.",
+      "order_index": 5,
+      "section_id": "sec01"
+    }
+  ]
+}

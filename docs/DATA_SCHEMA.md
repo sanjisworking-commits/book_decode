@@ -55,7 +55,9 @@ Contract: [`source_chapter.schema.json`](../schemas/source_chapter.schema.json)
 
 ## Argument Spine output
 
-Contract: [`argument_spine.schema.json`](../schemas/argument_spine.schema.json)
+Contract: [`argument_spine.schema.json`](../schemas/argument_spine.schema.json) (**v2.0** adaptive nodes + optional `relations[]`).
+
+Discovery intermediate: [`argument_discovery.schema.json`](../schemas/argument_discovery.schema.json) → stored as `chapters/{chapter_id}.discovery.json`.
 
 See [ARGUMENT_SPINE_SPECIFICATION.md](ARGUMENT_SPINE_SPECIFICATION.md) for node types and fields.
 
