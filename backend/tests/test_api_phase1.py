@@ -78,14 +78,15 @@ def test_upload_and_process_completes_validated_spine(
     spine = client.get(f"/books/{book_id}/chapters/{chapter_id}/spine")
     assert spine.status_code == 200, spine.text
     body = spine.json()
-    assert body["language_modes"] == ["en", "hinglish"]
+    # Default PROTOTYPE_ONE_SHOT soft path is English-only (hinglish skipped).
+    assert body["language_modes"] == ["en"]
+    assert body.get("schema_version") in {"1.0", "2.0"}
     assert body.get("nodes")
     assert body.get("validation", {}).get("schema_valid") is True
     assert body.get("validation", {}).get("source_refs_valid") is True
     for node in body["nodes"]:
         assert set(node.get("source_block_ids") or []).issubset(allowed)
-        if node.get("statement_en"):
-            assert node.get("statement_hinglish")
+        assert node.get("statement_hinglish") is None
 
 
 def test_process_unknown_book(client: TestClient) -> None:

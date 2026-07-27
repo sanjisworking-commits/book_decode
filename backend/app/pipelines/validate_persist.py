@@ -12,7 +12,9 @@ from app.domain.enums import BookProcessingStatus, ChapterStatus, UIStage
 from app.pipelines.align_spine import check_bilingual_alignment
 from app.pipelines.llm_bind import bind_llm
 from app.pipelines.validate_spine import (
+    strip_invalid_relations,
     strip_invalid_source_refs,
+    validate_relations,
     validate_source_refs,
     validate_spine_schema,
 )
@@ -129,6 +131,7 @@ class ValidatePersistPipeline:
             "error": None,
         }
         spine = strip_invalid_source_refs(spine, allowed)
+        spine = strip_invalid_relations(spine, allowed)
         spine["language_modes"] = ["en"]
         for node in spine.get("nodes") or []:
             node.setdefault("statement_hinglish", None)
@@ -157,6 +160,7 @@ class ValidatePersistPipeline:
 
         schema_errors = validate_spine_schema(spine)
         ref_errors = validate_source_refs(spine, allowed)
+        rel_errors = validate_relations(spine, allowed)
         # Soft demo path: keep spine even with minor schema noise; UI can still open.
 
         now = utc_now_iso()
@@ -167,6 +171,10 @@ class ValidatePersistPipeline:
             )
         if ref_errors:
             notes = (notes + " | soft_ref_warnings: " + "; ".join(ref_errors[:5])).strip(" |")
+        if rel_errors:
+            notes = (notes + " | soft_relation_warnings: " + "; ".join(rel_errors[:5])).strip(
+                " |"
+            )
         spine["confidence_summary"] = {
             "overall": (spine.get("confidence_summary") or {}).get("overall"),
             "notes": notes,
@@ -182,6 +190,7 @@ class ValidatePersistPipeline:
         spine["validation"] = {
             "schema_valid": len(schema_errors) == 0,
             "source_refs_valid": len(ref_errors) == 0,
+            "relations_valid": len(rel_errors) == 0,
             "bilingual_aligned": False,
             "checked_at": now,
             "mode": "soft",
@@ -279,6 +288,7 @@ class ValidatePersistPipeline:
         while True:
             schema_errors = validate_spine_schema(spine)
             ref_errors = validate_source_refs(spine, allowed)
+            rel_errors = validate_relations(spine, allowed)
             align_errors: list[str] = []
             en_path = self.fs.chapter_spine_en_path(book_id, chapter_id)
             # Skip bilingual alignment when hinglish mode is absent (prototype EN-only).
@@ -292,7 +302,12 @@ class ValidatePersistPipeline:
                 except Exception:
                     align_errors = ["could_not_check_bilingual_alignment"]
 
-            if not schema_errors and not ref_errors and not align_errors:
+            if (
+                not schema_errors
+                and not ref_errors
+                and not rel_errors
+                and not align_errors
+            ):
                 final = self._mark_valid(spine, attempts=attempts)
                 self.fs.write_json(self.fs.chapter_spine_path(book_id, chapter_id), final)
                 self.fs.write_json(
@@ -320,7 +335,7 @@ class ValidatePersistPipeline:
                     },
                 }
 
-            last_errors = schema_errors + ref_errors + align_errors
+            last_errors = schema_errors + ref_errors + rel_errors + align_errors
             if attempts >= self.max_retries:
                 break
 
@@ -336,12 +351,16 @@ class ValidatePersistPipeline:
                 if schema_errors:
                     spine = self._repair_schema(spine, schema_errors)
                     spine = strip_invalid_source_refs(spine, allowed)
+                    spine = strip_invalid_relations(spine, allowed)
                 elif ref_errors:
                     # Deterministic strip first, then LLM repair if still dirty
                     spine = strip_invalid_source_refs(spine, allowed)
                     still = validate_source_refs(spine, allowed)
                     if still:
                         spine = self._repair_sources(spine, allowed, still)
+                    spine = strip_invalid_relations(spine, allowed)
+                elif rel_errors:
+                    spine = strip_invalid_relations(spine, allowed)
                 elif align_errors:
                     # Restore hinglish overlay from English if alignment broke
                     if en_path.exists():
@@ -431,6 +450,7 @@ class ValidatePersistPipeline:
         out["validation"] = {
             "schema_valid": True,
             "source_refs_valid": True,
+            "relations_valid": True,
             "bilingual_aligned": "hinglish" in (out.get("language_modes") or []),
             "checked_at": now,
         }
@@ -458,7 +478,10 @@ class ValidatePersistPipeline:
         # Preserve identity fields
         repaired["book_id"] = spine.get("book_id") or repaired.get("book_id")
         repaired["chapter_id"] = spine.get("chapter_id") or repaired.get("chapter_id")
-        repaired["schema_version"] = "1.0"
+        repaired["schema_version"] = spine.get("schema_version") or repaired.get(
+            "schema_version"
+        ) or "2.0"
+        repaired = strip_invalid_relations(repaired)
         if not repaired.get("language_modes"):
             repaired["language_modes"] = spine.get("language_modes") or ["en"]
         prev = repaired.get("processing") if isinstance(repaired.get("processing"), dict) else {}
@@ -500,9 +523,12 @@ class ValidatePersistPipeline:
         )
         repaired = self.llm.complete_json(system=system, user=user)
         repaired = strip_invalid_source_refs(repaired, allowed)
+        repaired = strip_invalid_relations(repaired, allowed)
         repaired["book_id"] = spine.get("book_id") or repaired.get("book_id")
         repaired["chapter_id"] = spine.get("chapter_id") or repaired.get("chapter_id")
-        repaired["schema_version"] = "1.0"
+        repaired["schema_version"] = spine.get("schema_version") or repaired.get(
+            "schema_version"
+        ) or "2.0"
         prev = repaired.get("processing") if isinstance(repaired.get("processing"), dict) else {}
         versions = dict(prev.get("prompt_versions") or {})
         versions["source_validation"] = f"6.0.0:{prompt_hash}"

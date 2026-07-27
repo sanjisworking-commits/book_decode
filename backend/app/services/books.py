@@ -456,11 +456,12 @@ class BookService:
     def run_ingest_sync(self, book_id: str) -> None:
         """Run ingest then decode chapters progressively.
 
-        Prototype (``PROTOTYPE_ONE_SHOT``): one LLM extract per chapter + soft
-        validate; skips synthesise and hinglish adapt.
+        Prototype (``PROTOTYPE_ONE_SHOT``): adaptive discovery + synthesis per
+        chapter (chunk discovery only over budget) + soft validate; skips
+        hinglish adapt. Phase 4 partial merge is skipped when extract already
+        wrote a complete English spine.
 
-        Full path: extract→synth→adapt→validate per chapter so chapter 1 can
-        open while later chapters continue decoding.
+        Full path: same English two-pass, then adapt → hard validate per chapter.
         """
         self._refresh_llm_clients()
         settings = getattr(self, "settings", None) or get_settings()
@@ -604,22 +605,35 @@ class BookService:
                 )
                 continue
 
-            # --- synthesise ---
-            self.db.update_book(
-                book_id,
-                processing_status=BookProcessingStatus.CONSTRUCTING_SPINES.value,
-                current_stage=UIStage.CONSTRUCTING_ARGUMENT_SPINES.value,
-                current_chapter_id=chapter_id,
+            # --- synthesise (legacy partial-merge only when still needed) ---
+            needs_synthesis = bool(
+                (extract_result.get("summary") or {}).get("needs_synthesis")
+                or (ch.get("preview") or {}).get("needs_synthesis")
             )
-            synth_result = self.synthesise.synthesise_chapter(
-                book_id, ch, book=self.db.get_book(book_id) or book
-            )
-            ch = synth_result["chapter"]
-            updated = self._merge_chapter(book_id, chapter_id, ch)
-            if ch.get("status") == ChapterStatus.FAILED.value:
-                summaries.append(synth_result["summary"])
-                self._refresh_progress_counts(book_id, updated)
-                continue
+            if needs_synthesis:
+                self.db.update_book(
+                    book_id,
+                    processing_status=BookProcessingStatus.CONSTRUCTING_SPINES.value,
+                    current_stage=UIStage.CONSTRUCTING_ARGUMENT_SPINES.value,
+                    current_chapter_id=chapter_id,
+                )
+                synth_result = self.synthesise.synthesise_chapter(
+                    book_id, ch, book=self.db.get_book(book_id) or book
+                )
+                ch = synth_result["chapter"]
+                updated = self._merge_chapter(book_id, chapter_id, ch)
+                if ch.get("status") == ChapterStatus.FAILED.value:
+                    summaries.append(synth_result["summary"])
+                    self._refresh_progress_counts(book_id, updated)
+                    continue
+            else:
+                # Adaptive two-pass already wrote English spine artefacts.
+                self.db.update_book(
+                    book_id,
+                    processing_status=BookProcessingStatus.CONSTRUCTING_SPINES.value,
+                    current_stage=UIStage.CONSTRUCTING_ARGUMENT_SPINES.value,
+                    current_chapter_id=chapter_id,
+                )
 
             # --- adapt ---
             self.db.update_book(
@@ -832,14 +846,19 @@ class BookService:
             if ch.get("status") == ChapterStatus.FAILED.value:
                 result = {"chapter": ch, "summary": extract_result["summary"]}
             else:
-                synth_result = self.synthesise.synthesise_chapter(
-                    book_id, ch, book=self.db.get_book(book_id) or book
+                needs_synthesis = bool(
+                    (extract_result.get("summary") or {}).get("needs_synthesis")
+                    or (ch.get("preview") or {}).get("needs_synthesis")
                 )
-                ch = {**synth_result["chapter"], "retry_count": retry_count + 1}
-                updated = self._merge_chapter(book_id, chapter_id, ch)
-                if ch.get("status") == ChapterStatus.FAILED.value:
-                    result = {"chapter": ch, "summary": synth_result["summary"]}
-                else:
+                if needs_synthesis:
+                    synth_result = self.synthesise.synthesise_chapter(
+                        book_id, ch, book=self.db.get_book(book_id) or book
+                    )
+                    ch = {**synth_result["chapter"], "retry_count": retry_count + 1}
+                    updated = self._merge_chapter(book_id, chapter_id, ch)
+                    if ch.get("status") == ChapterStatus.FAILED.value:
+                        result = {"chapter": ch, "summary": synth_result["summary"]}
+                if ch.get("status") != ChapterStatus.FAILED.value:
                     adapt_result = self.adapt.adapt_chapter(book_id, ch)
                     ch = {**adapt_result["chapter"], "retry_count": retry_count + 1}
                     updated = self._merge_chapter(book_id, chapter_id, ch)
@@ -860,7 +879,10 @@ class BookService:
                             "retry_count": retry_count + 1,
                         }
                         updated = self._merge_chapter(book_id, chapter_id, ch)
-                        result = {"chapter": ch, "summary": validate_result["summary"]}
+                        result = {
+                            "chapter": ch,
+                            "summary": validate_result["summary"],
+                        }
 
         self._refresh_progress_counts(book_id, updated)
         # Merge result back into chapter list

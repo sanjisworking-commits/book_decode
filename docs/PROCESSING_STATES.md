@@ -29,8 +29,8 @@ Map these to internal pipeline stages one-to-one where possible. Stage 5–8 may
 | `reading_structure` | Docling / structure read |
 | `detecting_chapters` | Chapter detection |
 | `preparing_blocks` | Normalisation + block IDs |
-| `analysing_chapters` | LLM extraction running |
-| `constructing_spines` | Synthesis |
+| `analysing_chapters` | LLM Argument Discovery (+ chunk merge when needed) |
+| `constructing_spines` | Adaptive synthesis complete (or legacy partial merge) |
 | `creating_hinglish` | Language adaptation |
 | `validating` | Schema + source checks |
 | `saving` | Persist artefacts |
@@ -45,8 +45,8 @@ Map these to internal pipeline stages one-to-one where possible. Stage 5–8 may
 |--------|---------|
 | `pending` | Not started |
 | `chunking` | Preparing chunks |
-| `extracting` | Partial extraction |
-| `synthesising` | Combining partials |
+| `extracting` | Adaptive discovery / synthesis in progress |
+| `synthesising` | Legacy partial-spine merge only (skipped on default adaptive path) |
 | `adapting_hinglish` | Hindi-English pass |
 | `validating` | Checks running |
 | `retrying` | Automatic or manual retry |

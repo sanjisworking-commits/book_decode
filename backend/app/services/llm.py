@@ -43,7 +43,14 @@ class LLMError(RuntimeError):
 
 
 class LLMClient(Protocol):
-    def complete_json(self, *, system: str, user: str) -> dict[str, Any]:
+    def complete_json(
+        self,
+        *,
+        system: str,
+        user: str,
+        temperature: float | None = None,
+        pass_name: str | None = None,
+    ) -> dict[str, Any]:
         ...
 
 
@@ -159,7 +166,15 @@ class OpenAICompatibleClient:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    def complete_json(self, *, system: str, user: str) -> dict[str, Any]:
+    def complete_json(
+        self,
+        *,
+        system: str,
+        user: str,
+        temperature: float | None = None,
+        pass_name: str | None = None,
+    ) -> dict[str, Any]:
+        _ = pass_name
         if not self.settings.llm_api_key:
             raise LLMError(
                 "LLM_API_KEY is not configured. Set LLM_API_KEY or LLM_MOCK=true."
@@ -167,9 +182,14 @@ class OpenAICompatibleClient:
 
         url = self.settings.llm_api_base.rstrip("/") + "/chat/completions"
         max_tokens = self.settings.effective_llm_max_tokens()
+        temp = (
+            float(temperature)
+            if temperature is not None
+            else float(self.settings.llm_temperature)
+        )
         payload: dict[str, Any] = {
             "model": self.settings.llm_model,
-            "temperature": self.settings.llm_temperature,
+            "temperature": temp,
             "max_tokens": max_tokens,
             "messages": [
                 {"role": "system", "content": system},
@@ -213,7 +233,15 @@ class AnthropicClient:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    def complete_json(self, *, system: str, user: str) -> dict[str, Any]:
+    def complete_json(
+        self,
+        *,
+        system: str,
+        user: str,
+        temperature: float | None = None,
+        pass_name: str | None = None,
+    ) -> dict[str, Any]:
+        _ = pass_name
         if not self.settings.llm_api_key:
             raise LLMError(
                 "LLM_API_KEY is not configured. Set LLM_API_KEY or LLM_MOCK=true."
@@ -226,10 +254,15 @@ class AnthropicClient:
         else:
             url = base + "/v1/messages"
 
+        temp = (
+            float(temperature)
+            if temperature is not None
+            else float(self.settings.llm_temperature)
+        )
         payload = {
             "model": self.settings.llm_model,
             "max_tokens": self.settings.llm_max_tokens,
-            "temperature": self.settings.llm_temperature,
+            "temperature": temp,
             "system": system,
             "messages": [{"role": "user", "content": user}],
         }
@@ -275,7 +308,16 @@ class MockLLMClient:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    def complete_json(self, *, system: str, user: str) -> dict[str, Any]:
+    def complete_json(
+        self,
+        *,
+        system: str,
+        user: str,
+        temperature: float | None = None,
+        pass_name: str | None = None,
+    ) -> dict[str, Any]:
+        _ = temperature  # deterministic mock ignores temperature
+        _ = pass_name
         # Phase 6 repair paths
         if "===REPAIR_SPINE_JSON===" in user:
             return self._mock_repair_schema(user)
@@ -287,10 +329,24 @@ class MockLLMClient:
         if adapt_marker in user:
             return self._mock_adapt(user)
 
-        # Phase 4 synthesis path
+        # Phase 4 synthesis path (partial merge)
         synth_marker = "===PARTIAL_SPINES_JSON==="
         if synth_marker in user:
             return self._mock_synthesis(user)
+
+        # Adaptive Pass 2
+        if "===ARGUMENT_DISCOVERY_JSON===" in user:
+            return self._mock_adaptive_synthesis(user)
+
+        # Discovery merge
+        if "===CHUNK_DISCOVERIES_JSON===" in user:
+            return self._mock_discovery_merge(user)
+
+        # Adaptive Pass 1 discovery
+        if "===DISCOVERY_SOURCE_BLOCKS_JSON===" in user or (
+            "Argument Discovery" in system and "===SOURCE_BLOCKS_JSON===" in user
+        ):
+            return self._mock_discovery(user)
 
         book_id = "book"
         chapter_id = "ch01"
@@ -422,6 +478,353 @@ class MockLLMClient:
         }
         return spine
 
+    def _mock_discovery(self, prompt: str) -> dict[str, Any]:
+        block_ids = re.findall(r'"block_id"\s*:\s*"([^"]+)"', prompt)
+        ids = block_ids[:8] if block_ids else ["b1"]
+        first = ids[0]
+        second = ids[1] if len(ids) > 1 else first
+        third = ids[2] if len(ids) > 2 else first
+        book_id, chapter_id = "mock-book", "ch01"
+        try:
+            marker = "===DISCOVERY_SOURCE_BLOCKS_JSON==="
+            if marker not in prompt:
+                marker = "===SOURCE_BLOCKS_JSON==="
+            if marker in prompt:
+                raw = prompt.split(marker, 1)[1].strip()
+                payload = json.loads(raw)
+                book_id = payload.get("book_id") or book_id
+                chapter_id = payload.get("chapter_id") or chapter_id
+                blocks = payload.get("blocks") or []
+                if blocks:
+                    ids = [b["block_id"] for b in blocks if b.get("block_id")][:8] or ids
+                    first = ids[0]
+                    second = ids[1] if len(ids) > 1 else first
+                    third = ids[2] if len(ids) > 2 else first
+        except Exception:
+            logger.exception("Mock discovery failed to parse payload; using defaults")
+
+        return {
+            "schema_version": "1.0",
+            "book_id": book_id,
+            "chapter_id": chapter_id,
+            "chapter_types": ["conceptual_framework"],
+            "chapter_objective": {
+                "statement": "Understand the chapter's organising argument",
+                "source_block_ids": [first],
+                "confidence": 0.8,
+            },
+            "central_problem": {
+                "statement": "What claim does this chapter advance?",
+                "source_block_ids": [first],
+                "confidence": 0.75,
+            },
+            "argument_movements": [
+                {
+                    "movement_id": "m01",
+                    "title": "Setup",
+                    "function": "introduces_core_claim",
+                    "description": "Introduces the chapter problem",
+                    "source_block_ids": ids[:2],
+                    "order": 0,
+                }
+            ],
+            "claims": [
+                {
+                    "claim_id": "c01",
+                    "statement": "Mock central claim from discovery",
+                    "claim_level": "major",
+                    "position_owner": "author",
+                    "source_status": "author_paraphrase",
+                    "source_block_ids": [first],
+                    "confidence": 0.9,
+                }
+            ],
+            "supporting_material": [
+                {
+                    "item_id": "s01",
+                    "material_type": "empirical_evidence",
+                    "statement": "Mock supporting evidence",
+                    "supports_claim_ids": ["c01"],
+                    "source_block_ids": [second],
+                    "confidence": 0.85,
+                },
+                {
+                    "item_id": "s02",
+                    "material_type": "example",
+                    "statement": "Mock example",
+                    "supports_claim_ids": ["c01"],
+                    "source_block_ids": [third],
+                    "confidence": 0.8,
+                },
+            ],
+            "objections_and_limits": [
+                {
+                    "statement": "Mock source-grounded objection",
+                    "source_block_ids": [third],
+                    "response": "Mock response in source",
+                }
+            ],
+            "position_owners": [{"owner": "author", "role": "narrator"}],
+            "recommended_node_types": [
+                "chapter_objective",
+                "organising_idea",
+                "central_claim",
+                "supporting_claim",
+                "reasoning_step",
+                "evidence",
+                "example",
+                "objection",
+                "response",
+                "one_sentence_decode",
+                "chapter_question",
+            ],
+            "omit_or_deemphasize": ["analogy", "historical_context", "external_counter"],
+            "unresolved_questions": [],
+            "confidence_summary": {
+                "overall": 0.8,
+                "notes": "Generated by MockLLMClient discovery (LLM_MOCK=true).",
+            },
+            "conflicts": [],
+        }
+
+    def _mock_discovery_merge(self, prompt: str) -> dict[str, Any]:
+        merged = self._mock_discovery(prompt)
+        merged["confidence_summary"] = {
+            "overall": 0.78,
+            "notes": "Generated by MockLLMClient discovery merge (LLM_MOCK=true).",
+        }
+        return merged
+
+    def _mock_adaptive_synthesis(self, prompt: str) -> dict[str, Any]:
+        block_ids = re.findall(r'"block_id"\s*:\s*"([^"]+)"', prompt)
+        if not block_ids:
+            block_ids = re.findall(r'"source_block_ids"\s*:\s*\["([^"]+)"', prompt)
+        ids = block_ids[:6] if block_ids else ["b1"]
+        first = ids[0]
+        second = ids[1] if len(ids) > 1 else first
+        third = ids[2] if len(ids) > 2 else first
+        fourth = ids[3] if len(ids) > 3 else first
+        book_id, chapter_id = "mock-book", "ch01"
+        try:
+            for marker in (
+                "===SYNTHESIS_SOURCE_BLOCKS_JSON===",
+                "===SOURCE_BLOCKS_JSON===",
+            ):
+                if marker in prompt:
+                    raw = prompt.split(marker, 1)[1].strip()
+                    # User message may contain a second JSON blob after discovery marker.
+                    decoder = json.JSONDecoder()
+                    payload, _ = decoder.raw_decode(raw)
+                    if isinstance(payload, dict):
+                        book_id = payload.get("book_id") or book_id
+                        chapter_id = payload.get("chapter_id") or chapter_id
+                        blocks = payload.get("blocks") or []
+                        if blocks:
+                            ids = [
+                                b["block_id"] for b in blocks if b.get("block_id")
+                            ][:6] or ids
+                            first = ids[0]
+                            second = ids[1] if len(ids) > 1 else first
+                            third = ids[2] if len(ids) > 2 else first
+                            fourth = ids[3] if len(ids) > 3 else first
+                    break
+        except Exception:
+            logger.debug("Mock adaptive synthesis meta parse fallback", exc_info=True)
+
+        nodes = [
+            {
+                "id": "tmp-n01",
+                "node_type": "chapter_objective",
+                "order": 0,
+                "statement_en": "Understand the chapter's organising argument",
+                "statement_hinglish": None,
+                "explanation_en": "Derived from discovery + source.",
+                "explanation_hinglish": None,
+                "source_status": "ai_inference",
+                "source_block_ids": [first],
+                "confidence": 0.8,
+                "importance": "important",
+                "warnings": ["mock_llm"],
+            },
+            {
+                "id": "tmp-n02",
+                "node_type": "organising_idea",
+                "order": 1,
+                "statement_en": "Mock organising idea from adaptive synthesis",
+                "statement_hinglish": None,
+                "explanation_en": "Grounded in source blocks.",
+                "explanation_hinglish": None,
+                "source_status": "author_paraphrase",
+                "source_block_ids": [first],
+                "confidence": 0.9,
+                "claim_level": "chapter",
+                "importance": "central",
+                "warnings": ["mock_llm"],
+            },
+            {
+                "id": "tmp-n03",
+                "node_type": "central_claim",
+                "order": 2,
+                "statement_en": "Mock central claim from adaptive synthesis",
+                "statement_hinglish": None,
+                "explanation_en": "Primary claim.",
+                "explanation_hinglish": None,
+                "source_status": "author_paraphrase",
+                "source_block_ids": [first],
+                "confidence": 0.92,
+                "claim_level": "chapter",
+                "importance": "central",
+                "warnings": ["mock_llm"],
+            },
+            {
+                "id": "tmp-n04",
+                "node_type": "reasoning_step",
+                "order": 3,
+                "statement_en": "Mock reasoning step",
+                "statement_hinglish": None,
+                "explanation_en": "Links claim to evidence.",
+                "explanation_hinglish": None,
+                "source_status": "source_based_inference",
+                "source_block_ids": [second],
+                "supports_node_ids": ["tmp-n03"],
+                "confidence": 0.85,
+                "warnings": ["mock_llm"],
+            },
+            {
+                "id": "tmp-n05",
+                "node_type": "evidence",
+                "order": 4,
+                "statement_en": "Mock evidence node",
+                "statement_hinglish": None,
+                "explanation_en": "Supports the claim.",
+                "explanation_hinglish": None,
+                "source_status": "author_paraphrase",
+                "source_block_ids": [third],
+                "supports_node_ids": ["tmp-n03"],
+                "confidence": 0.88,
+                "warnings": ["mock_llm"],
+            },
+            {
+                "id": "tmp-n06",
+                "node_type": "example",
+                "order": 5,
+                "statement_en": "Mock example node",
+                "statement_hinglish": None,
+                "explanation_en": "Illustrates the claim.",
+                "explanation_hinglish": None,
+                "source_status": "author_paraphrase",
+                "source_block_ids": [third],
+                "confidence": 0.8,
+                "warnings": ["mock_llm"],
+            },
+            {
+                "id": "tmp-n07",
+                "node_type": "objection",
+                "order": 6,
+                "statement_en": "Mock source-grounded objection",
+                "statement_hinglish": None,
+                "explanation_en": "Position discussed in source.",
+                "explanation_hinglish": None,
+                "source_status": "quoted_position",
+                "source_block_ids": [fourth],
+                "position_owner": "interlocutor in source",
+                "confidence": 0.82,
+                "warnings": ["mock_llm"],
+            },
+            {
+                "id": "tmp-n08",
+                "node_type": "response",
+                "order": 7,
+                "statement_en": "Mock response to the objection",
+                "statement_hinglish": None,
+                "explanation_en": "Author's reply in source.",
+                "explanation_hinglish": None,
+                "source_status": "source_based_objection",
+                "source_block_ids": [fourth],
+                "confidence": 0.8,
+                "warnings": ["mock_llm"],
+            },
+            {
+                "id": "tmp-n09",
+                "node_type": "one_sentence_decode",
+                "order": 8,
+                "statement_en": (
+                    "The chapter argues a clear organising claim with support "
+                    "and a source-grounded objection."
+                ),
+                "statement_hinglish": None,
+                "explanation_en": "Decode summary.",
+                "explanation_hinglish": None,
+                "source_status": "ai_inference",
+                "source_block_ids": [first, second],
+                "confidence": 0.86,
+                "warnings": ["mock_llm"],
+            },
+            {
+                "id": "tmp-n10",
+                "node_type": "chapter_question",
+                "order": 9,
+                "statement_en": (
+                    "What is the chapter's organising claim and how is it supported?"
+                ),
+                "statement_hinglish": None,
+                "explanation_en": "Study prompt.",
+                "explanation_hinglish": None,
+                "source_status": "ai_inference",
+                "source_block_ids": [first],
+                "confidence": 0.84,
+                "warnings": ["mock_llm"],
+            },
+        ]
+        return {
+            "schema_version": "2.0",
+            "book_id": book_id,
+            "chapter_id": chapter_id,
+            "language_modes": ["en"],
+            "nodes": nodes,
+            "relations": [
+                {
+                    "from_node_id": "tmp-n04",
+                    "to_node_id": "tmp-n03",
+                    "relation_type": "supports",
+                    "explanation_en": "Reasoning supports claim",
+                    "source_block_ids": [second],
+                },
+                {
+                    "from_node_id": "tmp-n05",
+                    "to_node_id": "tmp-n03",
+                    "relation_type": "provides_evidence_for",
+                    "explanation_en": "Evidence supports claim",
+                    "source_block_ids": [third],
+                },
+                {
+                    "from_node_id": "tmp-n07",
+                    "to_node_id": "tmp-n03",
+                    "relation_type": "challenges",
+                    "explanation_en": "Objection challenges claim",
+                    "source_block_ids": [fourth],
+                },
+                {
+                    "from_node_id": "tmp-n08",
+                    "to_node_id": "tmp-n07",
+                    "relation_type": "responds_to",
+                    "explanation_en": "Response answers objection",
+                    "source_block_ids": [fourth],
+                },
+            ],
+            "confidence_summary": {
+                "overall": 0.84,
+                "notes": "Generated by MockLLMClient adaptive synthesis (LLM_MOCK=true).",
+            },
+            "processing": {
+                "model": "mock",
+                "prompt_versions": {"argument_spine_adaptive_synthesis": "4.0.0"},
+                "created_at": None,
+                "updated_at": None,
+            },
+            "validation": None,
+        }
+
 
 def _mock_nodes(chapter_id: str, cited: list[str], excerpt: str) -> list[dict[str, Any]]:
     types = [
@@ -485,6 +888,82 @@ def _mock_nodes(chapter_id: str, cited: list[str], excerpt: str) -> list[dict[st
     return nodes
 
 
+class CachingLLMClient:
+    """Best-effort disk cache around an LLM client (content-hash keyed)."""
+
+    def __init__(self, inner: LLMClient, settings: Settings) -> None:
+        self.inner = inner
+        self.settings = settings
+
+    def complete_json(
+        self,
+        *,
+        system: str,
+        user: str,
+        temperature: float | None = None,
+        pass_name: str | None = None,
+    ) -> dict[str, Any]:
+        import hashlib
+        from pathlib import Path
+
+        cache_dir = Path(self.settings.llm_cache_dir)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        model = self.settings.llm_model if not self.settings.llm_mock else "mock"
+        temp = (
+            float(temperature)
+            if temperature is not None
+            else float(self.settings.llm_temperature)
+        )
+        key_material = "|".join(
+            [
+                pass_name or "complete_json",
+                model,
+                f"{temp:.3f}",
+                system,
+                user,
+            ]
+        )
+        digest = hashlib.sha256(key_material.encode("utf-8")).hexdigest()
+        path = cache_dir / f"{digest}.json"
+        if path.exists():
+            try:
+                cached = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(cached, dict):
+                    return cached
+            except Exception:
+                logger.exception("LLM cache read failed path=%s", path)
+
+        max_attempts = max(1, int(self.settings.llm_json_max_retries) + 1)
+        last_exc: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                # Inner clients may not accept pass_name
+                result = self.inner.complete_json(
+                    system=system, user=user, temperature=temperature
+                )
+                try:
+                    path.write_text(
+                        json.dumps(result, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    logger.exception("LLM cache write failed path=%s", path)
+                return result
+            except LLMError as exc:
+                last_exc = exc
+                if "invalid JSON" not in str(exc).lower() or attempt >= max_attempts:
+                    raise
+                logger.warning(
+                    "LLM JSON parse retry %s/%s pass=%s: %s",
+                    attempt,
+                    max_attempts,
+                    pass_name,
+                    exc,
+                )
+        assert last_exc is not None
+        raise last_exc
+
+
 def _apply_provider_defaults(settings: Settings) -> Settings:
     """Apply Anthropic base/model defaults when still on OpenAI or retired IDs."""
     updates: dict[str, Any] = {}
@@ -515,18 +994,22 @@ def resolve_llm_settings(settings: Settings) -> Settings:
 
 def get_llm_client(settings: Settings) -> LLMClient:
     if settings.llm_mock:
-        return MockLLMClient(settings)
+        client: LLMClient = MockLLMClient(settings)
+    else:
+        resolved = resolve_llm_settings(settings)
+        provider = (resolved.llm_provider or "openai").strip().lower()
+        if provider not in VALID_PROVIDERS:
+            raise LLMError(
+                f"Unknown LLM_PROVIDER={settings.llm_provider!r}. "
+                f"Use one of: {', '.join(sorted(VALID_PROVIDERS))}."
+            )
 
-    resolved = resolve_llm_settings(settings)
-    provider = (resolved.llm_provider or "openai").strip().lower()
-    if provider not in VALID_PROVIDERS:
-        raise LLMError(
-            f"Unknown LLM_PROVIDER={settings.llm_provider!r}. "
-            f"Use one of: {', '.join(sorted(VALID_PROVIDERS))}."
-        )
+        if provider == "anthropic":
+            client = AnthropicClient(resolved)
+        else:
+            # openai and openai_compatible share the Chat Completions client
+            client = OpenAICompatibleClient(resolved)
 
-    if provider == "anthropic":
-        return AnthropicClient(resolved)
-
-    # openai and openai_compatible share the Chat Completions client
-    return OpenAICompatibleClient(resolved)
+    if settings.llm_cache_enabled:
+        return CachingLLMClient(client, settings)
+    return client

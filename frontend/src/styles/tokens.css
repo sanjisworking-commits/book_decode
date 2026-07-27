@@ -29,6 +29,12 @@
   --bd-inference-tint: #f6f0e3;
   --bd-counter: #b1503a;
   --bd-counter-tint: #f7ede9;
+  --bd-quoted: #5a6a8a;
+  --bd-quoted-tint: #eef0f5;
+  --bd-source-inference: #8a7340;
+  --bd-source-inference-tint: #f4f0e6;
+  --bd-source-objection: #8a5a2b;
+  --bd-source-objection-tint: #f5eee6;
 
   /* type */
   --bd-font-sans: 'IBM Plex Sans', system-ui, sans-serif;

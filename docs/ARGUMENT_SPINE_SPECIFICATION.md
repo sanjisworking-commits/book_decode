@@ -4,86 +4,104 @@
 
 The Argument Spine is the product’s core object: a structured, source-grounded reconstruction of a chapter’s argument—not a summary and not a free-form essay.
 
-## Required elements (per chapter)
+## Adaptive node inventory (schema 2.0)
 
-Each chapter decode must include these node types, in logical order:
+Pass 2 chooses which types the chapter warrants. Do **not** force every chapter into a fixed 12-slot template.
 
-| Order | Node type key | Role |
-|------:|---------------|------|
-| 1 | `chapter_question` | What question the chapter addresses |
-| 2 | `central_claim` | Author’s main claim for the chapter |
-| 3 | `reasoning_steps` | Ordered chain of reasoning (may be multiple nodes) |
-| 4 | `evidence_and_examples` | Evidence and examples supporting the claim |
-| 5 | `hidden_assumptions` | Unstated assumptions the argument relies on |
-| 6 | `tensions_or_gaps` | Tensions, weaknesses, or unresolved gaps |
-| 7 | `strongest_counter_position` | Strongest fair counter-position |
-| 8 | `consequence_if_correct` | What follows if the author is correct |
-| 9 | `role_in_book` | Chapter’s role in the overall book |
-| 10 | `one_sentence_decode` | Single-sentence chapter decode |
-| 11 | `confidence_and_unresolved` | Confidence notes and unresolved points |
-| 12 | `source_block_references` | Aggregate / index of cited source blocks |
+| Node type | Role |
+|-----------|------|
+| `chapter_objective` | What the chapter sets out to do |
+| `chapter_question` | What question the chapter addresses |
+| `central_claim` | Author’s main claim for the chapter |
+| `organising_idea` | Organising idea when a single “claim” underspecifies the chapter |
+| `supporting_claim` | Subordinate claim |
+| `reasoning_step` | Ordered reasoning link (legacy alias: `reasoning_steps`) |
+| `definition` | Definition introduced in source |
+| `evidence` | Evidence (legacy blob: `evidence_and_examples`) |
+| `example` | Example / illustration |
+| `analogy` | Analogy |
+| `quotation` | Quotation |
+| `assumption` | Assumption (legacy: `hidden_assumptions`) |
+| `qualification` | Scope limit / hedge (legacy: `tensions_or_gaps`) |
+| `objection` | Source-grounded objection (legacy counter: `strongest_counter_position`) |
+| `response` | Author response to an objection |
+| `implication` | Implication / consequence (legacy: `consequence_if_correct`) |
+| `narrative_context` / `historical_context` | Context nodes when present |
+| `transition` | Structural transition |
+| `role_in_book` | Chapter’s role in the book |
+| `one_sentence_decode` | Single-sentence decode |
+| `unresolved_question` | Open questions (legacy: `confidence_and_unresolved`) |
+| `source_block_references` | Aggregate index of cited blocks (program may rebuild) |
 
-`reasoning_steps` and `evidence_and_examples` may contain multiple ordered nodes. Other types are typically one primary node unless the schema allows a list under a parent.
+Normally prefer: objective or question; central claim or organising idea; decode sentence; role; unresolved when warranted.
 
-## Source status (required on argument elements)
+## Relations (optional top-level)
 
-Every argument element must declare how it relates to the source:
+`relations[]` entries:
+
+| Field | Description |
+|-------|-------------|
+| `from_node_id` / `to_node_id` | Endpoints in `nodes` |
+| `relation_type` | e.g. `supports`, `challenges`, `responds_to`, `provides_evidence_for`, … |
+| `explanation_en` | Optional |
+| `source_block_ids` | Allow-listed citations |
+
+## Source status
 
 | `source_status` | Meaning |
 |-----------------|---------|
 | `explicit_author` | Directly supported by clear author wording |
 | `author_paraphrase` | Faithful restatement of author content |
-| `ai_inference` | Analytical inference not explicitly stated |
-| `external_counter` | External or constructed counter-perspective (not claimed as author’s view) |
+| `quoted_position` | Position quoted / attributed in the source |
+| `source_based_inference` | Inference tightly grounded in source |
+| `source_based_objection` | Objection grounded in the source (not invented external criticism) |
+| `ai_inference` | Analytical inference |
+| `external_counter` | External criticism — **not** invented on the default source-grounded path |
 
 ## Node field model
-
-Each Argument Spine item supports:
 
 | Field | Description |
 |-------|-------------|
 | `id` | Stable node ID within the chapter spine |
-| `node_type` | One of the types above |
-| `statement_en` | English core statement |
-| `explanation_en` | English explanation |
-| `statement_hinglish` | Hindi-English core statement |
-| `explanation_hinglish` | Hindi-English explanation |
+| `node_type` | Adaptive type (aliases normalised in postprocess) |
+| `custom_label` | Optional short label |
+| `statement_en` / `explanation_en` | English content |
+| `statement_hinglish` / `explanation_hinglish` | Hindi-English (null on EN-only path) |
+| `claim_level` / `importance` | Optional ranking |
+| `position_owner` / `narrating_voice` | Speaker attribution |
+| `scope_qualifiers` | Preserved hedges / limits |
+| `supports_node_ids` / `supports_claim_ids` | Optional support pointers |
 | `source_status` | Enum above |
-| `source_block_ids` | List of stable block IDs |
-| `confidence` | Numeric 0–1 or null when unknown |
-| `order` | Display / reasoning order |
-| `prev_id` | Optional link to previous node |
-| `next_id` | Optional link to next node |
-| `warnings` | Optional list of warning strings |
+| `source_block_ids` | Allow-listed block IDs |
+| `confidence` | 0–1 or null |
+| `order` / `prev_id` / `next_id` | Program-owned sequencing |
+| `warnings` | Optional |
 
-English fields are authoritative. Hindi-English fields are produced only after English validation succeeds.
+## Decode / Remember mapping (UI)
+
+| View slot | Preferred node types |
+|-----------|----------------------|
+| Claim / takeaway | `central_claim` else `organising_idea` |
+| Logic chain / key points | `reasoning_step` / `supporting_claim` (ordered) |
+| Evidence / example | first `evidence` or `example` |
+| Counter | `objection` (source-grounded; not invented external) |
+| Flash front | `chapter_question` or `chapter_objective` |
+| Hook | `one_sentence_decode` |
 
 ## Chapter-level envelope
 
-Planned chapter spine document includes:
+- `schema_version`: `"2.0"` ( `"1.0"` still accepted for legacy artefacts)
+- `book_id`, `chapter_id`, `language_modes`
+- `nodes`, optional `relations`
+- `confidence_summary`, `processing`, `validation` (includes `relations_valid`)
 
-- `book_id`, `chapter_id`, `schema_version`
-- `language_modes`: `["en", "hinglish"]`
-- `nodes`: array of Argument Spine items
-- `confidence_summary` (optional aggregate)
-- `processing`: model, prompt versions, timestamps
-- `validation`: schema and source-check results
-
-Exact JSON Schema: [`../schemas/argument_spine.schema.json`](../schemas/argument_spine.schema.json).
+Exact JSON Schema: [`../schemas/argument_spine.schema.json`](../schemas/argument_spine.schema.json).  
+Discovery contract: [`../schemas/argument_discovery.schema.json`](../schemas/argument_discovery.schema.json).
 
 ## Integrity rules
 
 1. No unsupported external knowledge presented as author claim.
-2. Null / omit when evidence is insufficient—do not invent.
-3. Every substantive node should cite one or more existing source-block IDs (except clearly marked `external_counter` cases, which still must not fabricate chapter quotes).
-4. Reasoning order must be coherent (`order`, `prev_id` / `next_id`).
-5. English and Hindi-English structures must align (same node IDs and types).
-
-## Frontend rendering implications
-
-- Nodes are expandable.
-- Language toggle switches EN ↔ Hindi-English fields without changing structure.
-- Source IDs open a preview of the stored original block text.
-- Do not render fabricated demo spines; load API JSON only.
-
-See [DESIGN_BRIEF_FOR_CLAUDE.md](DESIGN_BRIEF_FOR_CLAUDE.md) and [SOURCE_INTEGRITY_RULES.md](SOURCE_INTEGRITY_RULES.md).
+2. Null / omit when evidence is insufficient—do not invent empty slots.
+3. Cite only existing source-block IDs.
+4. Prefer source-grounded objections / quoted positions over `external_counter`.
+5. English and Hindi-English structures must align when both modes are present.

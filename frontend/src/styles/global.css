@@ -208,6 +208,18 @@ code,
   --status: var(--bd-counter);
   --status-tint: var(--bd-counter-tint);
 }
+.status-quoted {
+  --status: var(--bd-quoted);
+  --status-tint: var(--bd-quoted-tint);
+}
+.status-source-inference {
+  --status: var(--bd-source-inference);
+  --status-tint: var(--bd-source-inference-tint);
+}
+.status-source-objection {
+  --status: var(--bd-source-objection);
+  --status-tint: var(--bd-source-objection-tint);
+}
 
 @media (max-width: 720px) {
   .page {

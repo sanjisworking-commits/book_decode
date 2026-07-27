@@ -16,6 +16,7 @@ _PATH_FIELDS = (
     "books_dir",
     "log_dir",
     "sqlite_path",
+    "llm_cache_dir",
 )
 
 
@@ -62,6 +63,8 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = "gpt-4o"
     llm_temperature: float = 0.2
+    # Discovery / adaptive synthesis prefer a slightly lower temperature.
+    llm_pass_temperature: float = 0.1
     # Full-chapter Argument Spines often exceed 8k output tokens when truncated mid-JSON.
     llm_max_tokens: int = 16384
     llm_mock: bool = False
@@ -71,12 +74,17 @@ class Settings(BaseSettings):
     # Cap on *full prompt* tokens (system+user) for one extract request (0 = auto).
     # Groq free llama-3.3-70b-versatile TPM is ~12k for the whole request.
     llm_max_input_tokens: int = 0
+    # Best-effort on-disk LLM response cache (content-hash keyed).
+    llm_cache_enabled: bool = False
+    llm_cache_dir: Path = ROOT_DIR / "data" / "cache" / "llm"
+    # JSON parse retries for adaptive passes (plus one semantic repair elsewhere).
+    llm_json_max_retries: int = 2
 
     # Phase 6 validation / retries
     max_chapter_retries: int = 3
     retry_backoff_seconds: float = 2.0
 
-    # Prototype: one Anthropic call per chapter (skip multi-chunk + synth + hinglish)
+    # Prototype: whole-chapter discovery + synthesis (skip hinglish); chunk only over budget
     prototype_one_shot: bool = True
 
     @field_validator(*_PATH_FIELDS, mode="before")
@@ -143,6 +151,7 @@ class Settings(BaseSettings):
             self.processed_dir,
             self.books_dir,
             self.log_dir,
+            self.llm_cache_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
         self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)

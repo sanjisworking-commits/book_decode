@@ -6,8 +6,11 @@ Prompts are version-controlled markdown files. Do **not** embed one large prompt
 
 ```text
 backend/app/prompts/
-├── argument_spine_extraction.md
-├── argument_spine_synthesis.md
+├── argument_discovery.md                 # Pass 1 (v1.0.0)
+├── argument_discovery_merge.md           # Pass 1b chunk merge (v1.0.0)
+├── argument_spine_adaptive_synthesis.md  # Pass 2 final spine (v4.0.0)
+├── argument_spine_extraction.md          # DEPRECATED — fixed one-prompt extract (rollback only)
+├── argument_spine_synthesis.md           # Legacy Phase 4 partial-spine merge (not default EN path)
 ├── hinglish_adaptation.md
 ├── output_repair.md
 └── source_validation.md
@@ -15,79 +18,66 @@ backend/app/prompts/
 
 ## Responsibilities
 
-### `argument_spine_extraction.md`
+### `argument_discovery.md` (Pass 1)
 
-Used for chapter or chunk-level extraction.
+Used for whole-chapter or chunk-level **Argument Discovery**.
 
 Must require:
 
-- JSON-only output
-- Strict schema compliance
-- No unsupported external knowledge as author claims
-- Source-block references on relevant fields
-- Clear separation of explicit vs inferred content (`source_status`)
-- Confidence values
-- Nulls when evidence is insufficient
-- No invented claims
-- Reasoning reconstruction rather than summary
+- JSON-only output matching discovery schema
+- Chapter type(s), movements, claims, supporting material
+- Source-grounded objections only when present in source
+- Recommended / omit node types for Pass 2
+- Allow-listed `source_block_ids` only
+- Empty arrays OK when unsupported
 
-### `argument_spine_synthesis.md`
+### `argument_discovery_merge.md` (Pass 1b)
 
-Used when a chapter was processed in multiple chunks.
+Used when a chapter needed multiple discovery calls.
 
 Must:
 
-- Combine partial outputs into one coherent chapter Argument Spine
-- Remove duplicates
-- Preserve competing interpretations when both are source-supported
-- Reconstruct one coherent reasoning chain
-- Retain all valid source references
-- Avoid introducing new claims not present in partials or source
+- Merge chunk discoveries into one chapter discovery
+- Deduplicate claims/movements; mark true conflicts
+- Preserve valid source references
+- Not invent external counters
+
+### `argument_spine_adaptive_synthesis.md` (Pass 2)
+
+Builds the final English Argument Spine (`schema_version` `"2.0"`) from discovery + source blocks.
+
+Must:
+
+- Choose flexible node types warranted by the chapter
+- Emit optional `relations[]`
+- Preserve qualifications / position owners
+- Set hinglish fields to null
+- Not invent `external_counter` nodes in this pass
+
+### `argument_spine_extraction.md` (deprecated)
+
+Fixed 12-slot one-prompt extraction. Kept for rollback experiments only. Default English path uses discovery → adaptive synthesis.
+
+### `argument_spine_synthesis.md` (legacy Phase 4)
+
+Combines **partial spines** from the old multi-chunk extract path. Not used when adaptive two-pass already wrote a complete English spine.
 
 ### `hinglish_adaptation.md`
 
-Used only after a validated English Argument Spine exists.
+Used only after a validated English Argument Spine exists (skipped under `PROTOTYPE_ONE_SHOT`).
 
-Must:
+### `output_repair.md` / `source_validation.md`
 
-- Adapt only the completed Argument Spine
-- Preserve field structure and node IDs
-- Retain important English terms
-- Use natural Hindi-English (simple Hindi structure)
-- Avoid literal translation
-- Avoid changing logical claims
+Schema and citation repair prompts for hard validation retries.
 
-### `output_repair.md`
+## Runtime loading
 
-Used when JSON parse or JSON Schema validation fails.
-
-Must:
-
-- Accept invalid/partial model output + schema errors
-- Return corrected JSON matching schema
-- Not invent new argument content beyond fixing structure/types
-- Preserve existing source-block IDs when present
-
-### `source_validation.md`
-
-Used when cited block IDs are missing or inconsistent.
-
-Must:
-
-- Accept spine JSON + allowed block ID set
-- Remove or correct invalid citations
-- Downgrade confidence / add warnings when support is weak
-- Not invent replacement quotations
-- Prefer null citations over fake IDs
-
-## Runtime loading (planned)
-
-- Load prompt text from files at job start
-- Record filename + content hash / version in spine `processing` metadata
-- Allow env override of prompt directory for experiments
+- Load prompt text from files; record filename + content hash in `processing.prompt_versions`
+- Discovery / adaptive synthesis use `llm_pass_temperature` (default `0.1`)
+- Optional disk cache under `data/cache/llm/` when `LLM_CACHE_ENABLED=true`
 
 ## Out of scope for prompts
 
 - Full-book Hindi translation before extraction
+- Separate external-criticism pipeline
 - Chat-style multi-turn tutoring prompts (future)
-- External web research prompts (out of MVP)

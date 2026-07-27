@@ -55,7 +55,8 @@ export function NodeDetailPanel({ node, lang, onOpenSources }: DetailProps) {
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
         <span className="status-dot" style={{ background: color }} />
         <span className="eyebrow" style={{ color }}>
-          {String(node.order + 1).padStart(2, "0")} · {NODE_SHORT[node.node_type]}
+          {String(node.order + 1).padStart(2, "0")} ·{" "}
+          {NODE_SHORT[node.node_type] ?? node.node_type.replaceAll("_", " ").toUpperCase()}
         </span>
         {warn && (
           <span
@@ -142,7 +143,8 @@ export function NodeDetailPanel({ node, lang, onOpenSources }: DetailProps) {
       </div>
 
       <div className="muted" style={{ fontSize: 12, marginTop: 16 }}>
-        {NODE_LABELS[node.node_type]} · {node.source_status.replaceAll("_", " ")}
+        {NODE_LABELS[node.node_type] ?? node.node_type.replaceAll("_", " ")} ·{" "}
+        {node.source_status.replaceAll("_", " ")}
       </div>
     </div>
   );

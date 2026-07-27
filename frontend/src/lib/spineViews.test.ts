@@ -19,7 +19,7 @@ function node(
 
 function spine(nodes: SpineNode[]): ArgumentSpine {
   return {
-    schema_version: "1.0",
+    schema_version: "2.0",
     book_id: "test-book",
     chapter_id: "ch01",
     language_modes: ["en", "hinglish"],
@@ -50,42 +50,42 @@ const fullNodes: SpineNode[] = [
   }),
   node({
     id: "r1",
-    node_type: "reasoning_steps",
+    node_type: "reasoning_step",
     order: 2,
     statement_en: "Step one.",
     statement_hinglish: "Pehla step.",
   }),
   node({
     id: "r2",
-    node_type: "reasoning_steps",
+    node_type: "reasoning_step",
     order: 3,
     statement_en: "Step two.",
   }),
   node({
     id: "r3",
-    node_type: "reasoning_steps",
+    node_type: "supporting_claim",
     order: 4,
     statement_en: "Step three.",
   }),
   node({
     id: "r4",
-    node_type: "reasoning_steps",
+    node_type: "reasoning_step",
     order: 5,
     statement_en: "Step four (decode only).",
   }),
   node({
     id: "e",
-    node_type: "evidence_and_examples",
+    node_type: "evidence",
     order: 6,
     statement_en: "Coffee cup recognition.",
     source_status: "author_paraphrase",
   }),
   node({
     id: "x",
-    node_type: "strongest_counter_position",
+    node_type: "objection",
     order: 7,
     statement_en: "Voting is underspecified.",
-    source_status: "external_counter",
+    source_status: "source_based_objection",
   }),
   node({
     id: "o",
@@ -104,6 +104,21 @@ describe("toDecodeView", () => {
     expect(view.logicChain).toHaveLength(4);
     expect(view.example?.statement).toContain("Coffee cup");
     expect(view.counter?.statement).toContain("underspecified");
+  });
+
+  it("falls back claim to organising_idea when central_claim missing", () => {
+    const nodes = fullNodes
+      .filter((n) => n.node_type !== "central_claim")
+      .concat([
+        node({
+          id: "oi",
+          node_type: "organising_idea",
+          order: 1,
+          statement_en: "Organising idea as claim.",
+        }),
+      ]);
+    const view = toDecodeView(spine(nodes), "en");
+    expect(view.claim?.statement).toContain("Organising idea");
   });
 
   it("falls back meaning to one_sentence_decode when claim has no explanation", () => {
@@ -138,6 +153,27 @@ describe("toDecodeView", () => {
     expect(view.claim?.statement).toContain("parallel models");
     expect(view.logicChain[1]?.statement).toBe("Step two.");
   });
+
+  it("prefers example over evidence_and_examples when both present", () => {
+    const view = toDecodeView(
+      spine([
+        node({
+          id: "ex",
+          node_type: "example",
+          order: 1,
+          statement_en: "Concrete example.",
+        }),
+        node({
+          id: "legacy",
+          node_type: "evidence_and_examples",
+          order: 2,
+          statement_en: "Legacy blob.",
+        }),
+      ]),
+      "en",
+    );
+    expect(view.example?.statement).toBe("Concrete example.");
+  });
 });
 
 describe("toRememberView", () => {
@@ -150,6 +186,22 @@ describe("toRememberView", () => {
     expect(view.flashBack?.statement).toContain("parallel models");
     expect(view.flashBack?.explanation).toContain("Many models vote");
     expect(view.flashFrontIsClaimFallback).toBe(false);
+  });
+
+  it("uses chapter_objective for flash front when question missing", () => {
+    const nodes = fullNodes
+      .filter((n) => n.node_type !== "chapter_question")
+      .concat([
+        node({
+          id: "obj",
+          node_type: "chapter_objective",
+          order: 0,
+          statement_en: "Learn the organising claim.",
+        }),
+      ]);
+    const view = toRememberView(spine(nodes), "en");
+    expect(view.flashFrontIsClaimFallback).toBe(false);
+    expect(view.flashFront?.statement).toContain("organising claim");
   });
 
   it("falls back flash front to central claim when question missing", () => {
@@ -170,7 +222,7 @@ describe("toRememberView", () => {
         }),
         node({
           id: "r1",
-          node_type: "reasoning_steps",
+          node_type: "reasoning_step",
           order: 2,
           statement_en: "Only one step.",
         }),

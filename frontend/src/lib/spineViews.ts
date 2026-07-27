@@ -27,7 +27,7 @@ export type RememberView = {
   hook: ViewText | null;
   flashFront: ViewText | null;
   flashBack: ViewText | null;
-  /** When true, front is a fallback recall of the central claim (no chapter_question). */
+  /** When true, front is a fallback recall of the claim (no question/objective). */
   flashFrontIsClaimFallback: boolean;
 };
 
@@ -48,20 +48,25 @@ function pick(n: SpineNode | undefined, lang: LanguageMode): ViewText | null {
   };
 }
 
-function byType(spine: ArgumentSpine, t: NodeType): SpineNode | undefined {
-  return spine.nodes.find((n) => n.node_type === t);
+function byTypes(spine: ArgumentSpine, types: NodeType[]): SpineNode | undefined {
+  for (const t of types) {
+    const found = spine.nodes.find((n) => n.node_type === t);
+    if (found) return found;
+  }
+  return undefined;
 }
 
-function allByType(spine: ArgumentSpine, t: NodeType): SpineNode[] {
+function allByTypes(spine: ArgumentSpine, types: NodeType[]): SpineNode[] {
+  const wanted = new Set(types);
   return spine.nodes
-    .filter((n) => n.node_type === t)
+    .filter((n) => wanted.has(n.node_type))
     .sort((a, b) => a.order - b.order);
 }
 
 export function toDecodeView(spine: ArgumentSpine, lang: LanguageMode): DecodeView {
-  const claimNode = byType(spine, "central_claim");
+  const claimNode = byTypes(spine, ["central_claim", "organising_idea"]);
   const claim = pick(claimNode, lang);
-  const onesentence = pick(byType(spine, "one_sentence_decode"), lang);
+  const onesentence = pick(byTypes(spine, ["one_sentence_decode"]), lang);
 
   let meaning: ViewText | null = null;
   if (claim?.explanation) {
@@ -75,16 +80,28 @@ export function toDecodeView(spine: ArgumentSpine, lang: LanguageMode): DecodeVi
     meaning = onesentence;
   }
 
-  const logicChain = allByType(spine, "reasoning_steps")
+  const logicChain = allByTypes(spine, [
+    "reasoning_step",
+    "reasoning_steps",
+    "supporting_claim",
+  ])
     .map((n) => pick(n, lang))
     .filter((v): v is ViewText => v != null);
 
-  const examples = allByType(spine, "evidence_and_examples")
+  const examples = allByTypes(spine, [
+    "evidence",
+    "example",
+    "evidence_and_examples",
+  ])
     .map((n) => pick(n, lang))
     .filter((v): v is ViewText => v != null);
   const example = examples[0] ?? null;
 
-  const counter = pick(byType(spine, "strongest_counter_position"), lang);
+  // Prefer source-grounded objections; keep legacy strongest_counter_position.
+  const counter = pick(
+    byTypes(spine, ["objection", "strongest_counter_position"]),
+    lang,
+  );
 
   return { claim, meaning, logicChain, example, counter };
 }
@@ -93,14 +110,21 @@ export function toRememberView(
   spine: ArgumentSpine,
   lang: LanguageMode,
 ): RememberView {
-  const claim = pick(byType(spine, "central_claim"), lang);
-  const hook = pick(byType(spine, "one_sentence_decode"), lang);
-  const keyPoints = allByType(spine, "reasoning_steps")
+  const claim = pick(byTypes(spine, ["central_claim", "organising_idea"]), lang);
+  const hook = pick(byTypes(spine, ["one_sentence_decode"]), lang);
+  const keyPoints = allByTypes(spine, [
+    "reasoning_step",
+    "reasoning_steps",
+    "supporting_claim",
+  ])
     .map((n) => pick(n, lang))
     .filter((v): v is ViewText => v != null)
     .slice(0, 3);
 
-  const question = pick(byType(spine, "chapter_question"), lang);
+  const question = pick(
+    byTypes(spine, ["chapter_question", "chapter_objective"]),
+    lang,
+  );
   const flashFrontIsClaimFallback = !question && Boolean(claim);
   const flashFront = question ?? (claim ? { ...claim } : null);
 

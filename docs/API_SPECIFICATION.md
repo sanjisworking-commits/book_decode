@@ -77,9 +77,12 @@ Returns ordered chapters with titles and per-chapter processing status (no full 
 
 `GET /books/{book_id}/chapters/{chapter_id}/spine`
 
-- Returns bilingual Argument Spine JSON
+- Returns Argument Spine JSON (`schema_version` `"2.0"` adaptive nodes; optional `relations[]`)
+- English-only spines omit hinglish (`language_modes: ["en"]`) under prototype oneshot
 - `404` if missing; `409` if chapter not ready
-- Optional query: `?lang=en|hinglish` may filter presentation fields later; MVP can return full bilingual document and let the client toggle
+- Optional query: `?lang=en|hinglish` may filter presentation fields later; MVP can return the full document and let the client toggle
+
+Discovery artefacts (`*.discovery.json`) are pipeline intermediates and are not required for the public spine endpoint.
 
 ### Retry failed chapter
 

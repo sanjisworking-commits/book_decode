@@ -4,23 +4,58 @@ export type SourceStatus =
   | "explicit_author"
   | "author_paraphrase"
   | "ai_inference"
-  | "external_counter";
+  | "external_counter"
+  | "quoted_position"
+  | "source_based_inference"
+  | "source_based_objection";
 
 export type NodeType =
+  | "chapter_objective"
   | "chapter_question"
   | "central_claim"
+  | "organising_idea"
+  | "supporting_claim"
+  | "reasoning_step"
   | "reasoning_steps"
+  | "definition"
+  | "evidence"
+  | "example"
+  | "analogy"
+  | "quotation"
   | "evidence_and_examples"
+  | "assumption"
   | "hidden_assumptions"
+  | "qualification"
+  | "objection"
+  | "response"
+  | "implication"
+  | "consequence_if_correct"
+  | "narrative_context"
+  | "historical_context"
+  | "transition"
   | "tensions_or_gaps"
   | "strongest_counter_position"
-  | "consequence_if_correct"
   | "role_in_book"
   | "one_sentence_decode"
+  | "unresolved_question"
   | "confidence_and_unresolved"
   | "source_block_references";
 
 export type LanguageMode = "en" | "hinglish";
+
+export type RelationType =
+  | "supports"
+  | "explains"
+  | "provides_evidence_for"
+  | "illustrates"
+  | "defines"
+  | "qualifies"
+  | "challenges"
+  | "responds_to"
+  | "depends_on"
+  | "leads_to"
+  | "contrasts_with"
+  | "provides_context_for";
 
 export type ApiErrorBody = {
   code: string;
@@ -79,15 +114,31 @@ export type ChapterListResponse = {
   chapters: ChapterSummary[];
 };
 
+export type SpineRelation = {
+  from_node_id: string;
+  to_node_id: string;
+  relation_type: RelationType | string;
+  explanation_en?: string | null;
+  source_block_ids?: string[];
+};
+
 export type SpineNode = {
   id: string;
   node_type: NodeType;
+  custom_label?: string | null;
   statement_en: string | null;
   explanation_en?: string | null;
   statement_hinglish?: string | null;
   explanation_hinglish?: string | null;
+  claim_level?: string | null;
+  importance?: string | null;
+  position_owner?: string | null;
+  narrating_voice?: string | null;
   source_status: SourceStatus;
   source_block_ids: string[];
+  scope_qualifiers?: string[];
+  supports_node_ids?: string[];
+  supports_claim_ids?: string[];
   confidence: number | null;
   order: number;
   prev_id?: string | null;
@@ -101,6 +152,7 @@ export type ArgumentSpine = {
   chapter_id: string;
   language_modes: LanguageMode[];
   nodes: SpineNode[];
+  relations?: SpineRelation[];
   confidence_summary?: {
     overall: number | null;
     notes: string | null;

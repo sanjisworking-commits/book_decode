@@ -104,7 +104,7 @@ def _seed_chapter(db: SqliteStore, fs: FilesystemStore, book_id: str = "b1") -> 
     return chapter
 
 
-def test_extract_chapter_oneshot_single_llm_call(stores) -> None:
+def test_extract_chapter_oneshot_two_llm_calls(stores) -> None:
     settings, db, fs = stores
     chapter = _seed_chapter(db, fs)
     pipe = ExtractPipeline(db, fs, settings)
@@ -114,12 +114,17 @@ def test_extract_chapter_oneshot_single_llm_call(stores) -> None:
     result = pipe.extract_chapter_oneshot("b1", chapter, book=db.get_book("b1"))
     assert result["summary"]["ok"] is True
     assert result["summary"]["extract_mode"] == "oneshot"
-    assert mock.complete_json.call_count == 1
+    assert result["summary"]["adaptive_two_pass"] is True
+    # Pass 1 discovery + Pass 2 adaptive synthesis
+    assert mock.complete_json.call_count == 2
+    assert fs.chapter_discovery_path("b1", "ch01").exists()
     assert fs.chapter_spine_en_path("b1", "ch01").exists()
     assert fs.chapter_spine_path("b1", "ch01").exists()
     spine = fs.read_json(fs.chapter_spine_path("b1", "ch01"))
     assert spine["language_modes"] == ["en"]
+    assert spine["schema_version"] == "2.0"
     assert spine.get("nodes")
+    assert spine.get("relations") is not None
 
 
 def test_validate_chapter_soft_completes_en_only(stores) -> None:

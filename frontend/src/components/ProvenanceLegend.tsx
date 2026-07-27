@@ -4,8 +4,11 @@ import type { SourceStatus } from "../types/api";
 const LEGEND: { status: SourceStatus; label: string }[] = [
   { status: "explicit_author", label: "Explicit author" },
   { status: "author_paraphrase", label: "Author paraphrase" },
+  { status: "quoted_position", label: "Quoted position" },
+  { status: "source_based_inference", label: "Source-based inference" },
+  { status: "source_based_objection", label: "Source-grounded objection" },
   { status: "ai_inference", label: "AI inference" },
-  { status: "external_counter", label: "External counter" },
+  { status: "external_counter", label: "External counter (rare)" },
 ];
 
 export function ProvenanceLegend() {
@@ -32,6 +35,9 @@ export function ProvenanceLegend() {
   );
 }
 
-export function nodeTypeLabel(nodeType: keyof typeof NODE_LABELS): string {
-  return NODE_LABELS[nodeType];
+export function nodeTypeLabel(nodeType: keyof typeof NODE_LABELS | string): string {
+  if (nodeType in NODE_LABELS) {
+    return NODE_LABELS[nodeType as keyof typeof NODE_LABELS];
+  }
+  return String(nodeType).replaceAll("_", " ");
 }
