@@ -2,7 +2,7 @@
 
 ## Current phase
 
-**Phase 6 — Validation and storage**
+**Phase 6 — Validation and storage** (API ready for Phase 7 UI)
 
 Pipeline runs Phase 1 → 5, then Phase 6 validates schema + source refs (with repair retries), persists only valid spines, and sets book status to `completed` or `completed_with_errors`.
 
@@ -12,6 +12,7 @@ Pipeline runs Phase 1 → 5, then Phase 6 validates schema + source refs (with r
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r backend/requirements.txt
+# Includes Docling (EPUB → structure). First install can take several minutes.
 cp .env.example .env
 ```
 

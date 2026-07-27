@@ -1,0 +1,75 @@
+/* tokens.css — Book Decode warm-neutral system */
+:root {
+  /* color · surface */
+  --bd-bg: #e8e2d8;
+  --bd-surface: #faf8f4;
+  --bd-surface-2: #f1ece3;
+  --bd-canvas: #f6f2ec;
+  --bd-border: #e6dfd4;
+  --bd-border-strong: #d8cfc1;
+  --bd-hairline: #efe9df;
+
+  /* color · text */
+  --bd-ink: #23201b;
+  --bd-body: #3d3830;
+  --bd-muted: #6f685d;
+  --bd-faint: #a49c90;
+  --bd-disabled: #c3bbae;
+
+  /* color · brand */
+  --bd-primary: #2f4b6b;
+  --bd-primary-hover: #22405a;
+
+  /* color · argument-node status */
+  --bd-explicit: #3f7d4e;
+  --bd-explicit-tint: #eef4ef;
+  --bd-paraphrase: #3a6ea5;
+  --bd-paraphrase-tint: #edf2f8;
+  --bd-inference: #a9791f;
+  --bd-inference-tint: #f6f0e3;
+  --bd-counter: #b1503a;
+  --bd-counter-tint: #f7ede9;
+
+  /* type */
+  --bd-font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --bd-font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --bd-text-xs: 11px;
+  --bd-text-sm: 12.5px;
+  --bd-text-base: 14px;
+  --bd-text-md: 15px;
+  --bd-text-lg: 18px;
+  --bd-text-xl: 28px;
+  --bd-text-2xl: 46px;
+
+  /* radius */
+  --bd-r-sm: 6px;
+  --bd-r-node: 9px;
+  --bd-r-card: 11px;
+  --bd-r-frame: 14px;
+
+  /* spacing */
+  --bd-1: 4px;
+  --bd-2: 8px;
+  --bd-3: 12px;
+  --bd-4: 16px;
+  --bd-6: 24px;
+  --bd-8: 32px;
+  --bd-10: 40px;
+  --bd-11: 44px;
+
+  /* elevation */
+  --bd-shadow-1: 0 1px 2px rgba(60,50,35,.05);
+  --bd-shadow-2: 0 4px 14px rgba(60,50,35,.1);
+  --bd-shadow-lift: 0 6px 18px rgba(60,50,35,.13);
+  --bd-ring: 0 0 0 3px rgba(47,75,107,.16);
+
+  /* motion */
+  --bd-ease: cubic-bezier(.4,0,.2,1);
+  --bd-dur-fast: 120ms;
+  --bd-dur: 250ms;
+}
+
+@keyframes bdPulse { 0%,100% { opacity:1 } 50% { opacity:.45 } }
+@keyframes bdFade  { from { opacity:0; transform:translateY(4px) } to { opacity:1; transform:none } }
+@keyframes bdBar   { from { width:0 } }
+@keyframes bdSpin  { to { transform:rotate(360deg) } }

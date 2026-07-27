@@ -236,3 +236,33 @@ def test_front_matter_before_first_chapter() -> None:
     book = normalise_book_from_docling(book_id="demo", docling_json=docling)
     assert any("Copyright" in b["text"] for b in book["front_matter"]["blocks"])
     assert book["chapters"][0]["chapter_id"] == "ch01"
+
+
+def test_part_interstitial_not_front_matter_duplicate_ids() -> None:
+    """Content between Part and next Chapter must not reuse front.sec00 IDs."""
+    # Enough front-matter blocks that a reset chapter counter would collide
+    front_items = [
+        {"label": "text", "text": f"Front matter paragraph number {i}."}
+        for i in range(1, 12)
+    ]
+    docling = _docling_texts(
+        *front_items,
+        {"label": "title", "text": "Chapter 1", "level": 1},
+        {"label": "text", "text": "First chapter body with enough words here."},
+        {"label": "title", "text": "Part 2", "level": 1},
+        {"label": "section_header", "text": "Human Intelligence", "level": 2},
+        {"label": "text", "text": "Part preamble before the next numbered chapter."},
+        {"label": "title", "text": "Chapter 2", "level": 1},
+        {"label": "text", "text": "Second chapter body with enough words here."},
+    )
+    book = normalise_book_from_docling(book_id="demo", docling_json=docling)
+    validate_canonical_book(book)
+
+    front_ids = [b["block_id"] for b in book["front_matter"]["blocks"]]
+    assert all(".front.sec00." in bid for bid in front_ids)
+    assert "Part preamble" not in " ".join(b["text"] for b in book["front_matter"]["blocks"])
+
+    intro = next(c for c in book["chapters"] if c["chapter_id"].endswith("-intro"))
+    assert any("Part preamble" in b["text"] for b in intro["blocks"])
+    assert any("Human Intelligence" in b["text"] for b in intro["blocks"])
+    assert book["chapters"][-1]["chapter_id"] == "ch02"

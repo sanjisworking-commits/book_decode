@@ -40,6 +40,8 @@ class ChapterSummary(BaseModel):
     status: str
     retry_count: int = 0
     error: ErrorBody | None = None
+    # Human-readable mid-phase progress, e.g. "chunk 3/26"
+    progress: str | None = None
 
 
 class ProcessingStatusResponse(BaseModel):
