@@ -40,6 +40,29 @@ async def upload_book(
         raise AppError(400, code, message) from exc
 
 
+@router.post("/upload-json", response_model=BookMetadata, status_code=201)
+async def upload_source_json(
+    file: UploadFile = File(...),
+    service: BookService = Depends(get_book_service),
+    settings: Settings = Depends(get_settings),
+) -> BookMetadata:
+    """Upload a clean source_chapter JSON (JSON-only ingest; LLM extract still runs)."""
+    filename = file.filename or "chapter.json"
+    data = await file.read()
+    try:
+        return service.upload_source_json(
+            filename=filename,
+            data=data,
+            max_size_bytes=settings.max_epub_size_bytes,
+        )
+    except ValueError as exc:
+        if len(exc.args) >= 2:
+            code, message = str(exc.args[0]), str(exc.args[1])
+        else:
+            code, message = "invalid_source_json", str(exc)
+        raise AppError(400, code, message) from exc
+
+
 @router.post("/{book_id}/process", response_model=ProcessingStatusResponse, status_code=202)
 async def process_book(
     book_id: str,

@@ -6,15 +6,17 @@ import json
 import logging
 from typing import Any
 
-from app.config import Settings, get_settings
+from app.config import Settings
 from app.domain.enums import BookProcessingStatus, ChapterStatus, UIStage
+from app.pipelines.chunk import estimate_request_tokens
+from app.pipelines.llm_bind import bind_llm
 from app.pipelines.validate_spine import (
     strip_invalid_source_refs,
     validate_source_refs,
     validate_spine_schema,
 )
 from app.prompts.loader import load_prompt
-from app.services.llm import LLMError, get_llm_client, resolve_llm_settings
+from app.services.llm import LLMError
 from app.storage.filesystem import FilesystemStore
 from app.storage.sqlite_store import SqliteStore
 from app.utils.ids import utc_now_iso
@@ -26,9 +28,10 @@ class ExtractPipeline:
     def __init__(self, db: SqliteStore, fs: FilesystemStore, settings: Settings | None = None) -> None:
         self.db = db
         self.fs = fs
-        raw = settings or get_settings()
-        self.settings = resolve_llm_settings(raw) if not raw.llm_mock else raw
-        self.llm = get_llm_client(raw)
+        self.settings, self.llm = bind_llm(settings)
+
+    def reload_llm(self, settings: Settings | None = None) -> None:
+        self.settings, self.llm = bind_llm(settings)
 
     def run(self, book_id: str) -> None:
         book = self.db.get_book(book_id)
@@ -41,9 +44,6 @@ class ExtractPipeline:
         if not chapters:
             self._fail(book, job_id, "No chapters available for extraction.")
             return
-
-        prompt_text, prompt_hash = load_prompt("argument_spine_extraction.md")
-        system = self._system_prompt(prompt_text)
 
         self.db.update_book(
             book_id,
@@ -62,146 +62,40 @@ class ExtractPipeline:
 
             chapter_id = ch["chapter_id"]
             self.db.update_book(book_id, current_chapter_id=chapter_id)
-
-            try:
-                source_path = self.fs.chapter_source_path(book_id, chapter_id)
-                chunks_path = self.fs.chapter_chunks_path(book_id, chapter_id)
-                if not source_path.exists() or not chunks_path.exists():
-                    raise RuntimeError("Missing source or chunk artefacts for chapter.")
-
-                source = self.fs.read_json(source_path)
-                chunk_plan = self.fs.read_json(chunks_path)
-                blocks_by_id = {
-                    b["block_id"]: b for b in (source.get("source_blocks") or [])
-                }
-                chunks = chunk_plan.get("chunks") or []
-                if not chunks:
-                    raise RuntimeError("Chunk plan is empty.")
-
-                # Mark extracting
-                ch_working = {**ch, "status": ChapterStatus.EXTRACTING.value, "error": None}
-                partials: list[dict[str, Any]] = []
-
-                for chunk in chunks:
-                    chunk_id = chunk["chunk_id"]
-                    allow_ids = list(chunk.get("block_ids") or [])
-                    chunk_blocks = [
-                        {
-                            "block_id": bid,
-                            "block_type": (blocks_by_id.get(bid) or {}).get("block_type"),
-                            "text": (blocks_by_id.get(bid) or {}).get("text"),
-                        }
-                        for bid in allow_ids
-                        if bid in blocks_by_id
-                    ]
-                    user = self._user_prompt(
-                        book=book,
-                        chapter=ch,
-                        chunk=chunk,
-                        blocks=chunk_blocks,
-                        partial=len(chunks) > 1,
-                    )
-                    raw = self.llm.complete_json(system=system, user=user)
-                    spine = self._postprocess_spine(
-                        raw,
-                        book_id=book_id,
-                        chapter_id=chapter_id,
-                        allowed={b["block_id"] for b in chunk_blocks},
-                        model=self.settings.llm_model if not self.settings.llm_mock else "mock",
-                        prompt_hash=prompt_hash,
-                    )
-                    partial_path = self.fs.chapter_spine_partial_path(
-                        book_id, chapter_id, chunk_id
-                    )
-                    self.fs.write_json(partial_path, spine)
-                    partials.append(
-                        {
-                            "chunk_id": chunk_id,
-                            "path": str(partial_path),
-                            "node_count": len(spine.get("nodes") or []),
-                        }
-                    )
-
-                # Single-chunk chapters: candidate spine is the one partial
-                if len(partials) == 1:
-                    candidate = self.fs.read_json(
-                        self.fs.chapter_spine_partial_path(
-                            book_id, chapter_id, chunks[0]["chunk_id"]
-                        )
-                    )
-                    self.fs.write_json(
-                        self.fs.chapter_spine_candidate_path(book_id, chapter_id),
-                        candidate,
-                    )
-                else:
-                    # Multi-chunk: write a manifest candidate pointer for Phase 4 synthesis
-                    self.fs.write_json(
-                        self.fs.chapter_spine_candidate_path(book_id, chapter_id),
-                        {
-                            "schema_version": "1.0",
-                            "book_id": book_id,
-                            "chapter_id": chapter_id,
-                            "language_modes": ["en"],
-                            "status": "needs_synthesis",
-                            "partials": partials,
-                            "nodes": [],
-                            "processing": {
-                                "model": self.settings.llm_model
-                                if not self.settings.llm_mock
-                                else "mock",
-                                "prompt_versions": {
-                                    "argument_spine_extraction": f"3.0.0:{prompt_hash}"
-                                },
-                                "created_at": utc_now_iso(),
-                                "updated_at": utc_now_iso(),
-                            },
-                            "validation": {
-                                "schema_valid": False,
-                                "source_refs_valid": False,
-                                "bilingual_aligned": False,
-                                "checked_at": utc_now_iso(),
-                            },
-                        },
-                    )
-
-                updated.append(
-                    {
-                        **ch_working,
-                        "status": ChapterStatus.PENDING.value,
-                        "preview": {
-                            **(ch.get("preview") or {}),
-                            "partial_count": len(partials),
-                            "needs_synthesis": len(partials) > 1,
-                            "extraction": "ok",
-                        },
-                    }
-                )
-                extract_summaries.append(
-                    {
-                        "chapter_id": chapter_id,
-                        "partial_count": len(partials),
-                        "needs_synthesis": len(partials) > 1,
-                    }
-                )
-            except Exception as exc:
-                logger.exception("Extraction failed chapter=%s book=%s", chapter_id, book_id)
-                updated.append(
-                    {
-                        **ch,
-                        "status": ChapterStatus.FAILED.value,
-                        "error": {
-                            "code": "extraction_failed",
-                            "message": str(exc),
-                            "details": None,
-                        },
-                    }
-                )
+            result = self.extract_chapter(book_id, ch, book=book)
+            updated.append(result["chapter"])
+            extract_summaries.append(result["summary"])
 
         self.db.replace_chapters(book_id, updated)
         failed = sum(1 for c in updated if c["status"] == ChapterStatus.FAILED.value)
         ok = len(updated) - failed
         if ok == 0:
-            self._fail(book, job_id, "All chapters failed Argument Spine extraction.")
+            first_err = next(
+                (
+                    (c.get("error") or {}).get("message")
+                    for c in updated
+                    if (c.get("error") or {}).get("message")
+                ),
+                None,
+            )
+            message = "All chapters failed Argument Spine extraction."
+            if first_err:
+                message = f"{message} First error: {first_err}"
+            self._fail(
+                book,
+                job_id,
+                message,
+                details={
+                    "chapter_errors": [
+                        {
+                            "chapter_id": c["chapter_id"],
+                            "message": ((c.get("error") or {}).get("message")),
+                        }
+                        for c in updated
+                        if c.get("status") == ChapterStatus.FAILED.value
+                    ][:12],
+                },
+            )
             return
 
         # Phase 3 idle-complete at analysing_chapters
@@ -248,9 +142,511 @@ class ExtractPipeline:
             "Phase 3 complete book_id=%s ok=%s failed=%s", book_id, ok, failed
         )
 
-    def _fail(self, book: dict[str, Any], job_id: str | None, message: str) -> None:
+    def extract_chapter_oneshot(
+        self,
+        book_id: str,
+        chapter: dict[str, Any],
+        *,
+        book: dict[str, Any] | None = None,
+        persist_status: bool = True,
+    ) -> dict[str, Any]:
+        """Prototype: one Anthropic JSON call per chapter → English spine artefacts.
+
+        Skips multi-chunk partials. Hinglish fields stay null. Writes
+        ``*.spine.en.json`` and ``*.spine.json`` for soft validation / UI.
+        """
+        book = book or self.db.get_book(book_id)
+        if not book:
+            raise KeyError(book_id)
+
+        chapter_id = chapter["chapter_id"]
+        prompt_text, prompt_hash = load_prompt("argument_spine_extraction.md")
+        system = self._system_prompt(prompt_text)
+        prompt_budget = self.settings.extract_prompt_token_budget()
+
+        try:
+            source_path = self.fs.chapter_source_path(book_id, chapter_id)
+            if not source_path.exists():
+                raise RuntimeError("Missing source artefact for chapter.")
+
+            source = self.fs.read_json(source_path)
+            all_blocks = list(source.get("source_blocks") or [])
+            if not all_blocks:
+                raise RuntimeError("Chapter has no source blocks.")
+
+            chunk_blocks, user, prompt_tokens = self._fit_blocks_to_prompt_budget(
+                book=book,
+                chapter=chapter,
+                system=system,
+                blocks=all_blocks,
+                prompt_budget=prompt_budget,
+                chunk_id=f"{chapter_id}.oneshot",
+                partial=False,
+            )
+            chunk = {
+                "chunk_id": f"{chapter_id}.oneshot",
+                "block_ids": [b["block_id"] for b in chunk_blocks],
+                "strategy": "oneshot_chapter",
+            }
+
+            ch_working = {
+                **chapter,
+                "status": ChapterStatus.EXTRACTING.value,
+                "error": None,
+                "preview": {
+                    **(chapter.get("preview") or {}),
+                    "extract_mode": "oneshot",
+                    "extract_chunk_index": 1,
+                    "extract_chunk_total": 1,
+                    "extract_chunk_id": chunk["chunk_id"],
+                    "oneshot_blocks": len(chunk_blocks),
+                    "oneshot_blocks_total": len(all_blocks),
+                    "prompt_tokens_est": prompt_tokens,
+                    "prompt_budget": prompt_budget,
+                },
+            }
+            if persist_status:
+                self._patch_chapter(book_id, chapter_id, ch_working)
+                self.db.update_book(book_id, current_chapter_id=chapter_id)
+
+            logger.info(
+                "Extracting oneshot chapter=%s book=%s blocks=%s/%s "
+                "prompt_tokens_est=%s budget=%s",
+                chapter_id,
+                book_id,
+                len(chunk_blocks),
+                len(all_blocks),
+                prompt_tokens,
+                prompt_budget,
+            )
+
+            raw = self.llm.complete_json(system=system, user=user)
+            spine = self._postprocess_spine(
+                raw,
+                book_id=book_id,
+                chapter_id=chapter_id,
+                allowed={b["block_id"] for b in chunk_blocks},
+                model=self.settings.llm_model if not self.settings.llm_mock else "mock",
+                prompt_hash=prompt_hash,
+            )
+            # Prototype: English-only artefact pair for Book Map / Spine UI.
+            spine["language_modes"] = ["en"]
+            for node in spine.get("nodes") or []:
+                node["statement_hinglish"] = None
+                node["explanation_hinglish"] = None
+
+            en_path = self.fs.chapter_spine_en_path(book_id, chapter_id)
+            spine_path = self.fs.chapter_spine_path(book_id, chapter_id)
+            cand_path = self.fs.chapter_spine_candidate_path(book_id, chapter_id)
+            self.fs.write_json(en_path, spine)
+            self.fs.write_json(spine_path, spine)
+            self.fs.write_json(cand_path, spine)
+
+            done = {
+                **ch_working,
+                "status": ChapterStatus.PENDING.value,
+                "preview": {
+                    **(ch_working.get("preview") or {}),
+                    "partial_count": 1,
+                    "needs_synthesis": False,
+                    "extraction": "ok",
+                    "extract_mode": "oneshot",
+                    "node_count": len(spine.get("nodes") or []),
+                },
+            }
+            return {
+                "chapter": done,
+                "summary": {
+                    "chapter_id": chapter_id,
+                    "ok": True,
+                    "partial_count": 1,
+                    "needs_synthesis": False,
+                    "extract_mode": "oneshot",
+                    "node_count": len(spine.get("nodes") or []),
+                },
+            }
+        except Exception as exc:
+            logger.exception(
+                "Oneshot extraction failed chapter=%s book=%s", chapter_id, book_id
+            )
+            failed = {
+                **chapter,
+                "status": ChapterStatus.FAILED.value,
+                "error": {
+                    "code": "extraction_failed",
+                    "message": str(exc),
+                    "details": {"extract_mode": "oneshot"},
+                },
+            }
+            return {
+                "chapter": failed,
+                "summary": {
+                    "chapter_id": chapter_id,
+                    "ok": False,
+                    "reason": str(exc),
+                    "extract_mode": "oneshot",
+                },
+            }
+
+    def _fit_blocks_to_prompt_budget(
+        self,
+        *,
+        book: dict[str, Any],
+        chapter: dict[str, Any],
+        system: str,
+        blocks: list[dict[str, Any]],
+        prompt_budget: int,
+        chunk_id: str,
+        partial: bool,
+    ) -> tuple[list[dict[str, Any]], str, int]:
+        """Pack a prefix of blocks so system+user stay under ``prompt_budget``.
+
+        Budgets the *serialized* extract prompt (not raw block text). Life Ch1
+        showed JSON envelopes inflating ~7k text tokens into ~21k prompt tokens
+        (~29k on Groq's tokenizer).
+        """
+        if not blocks:
+            raise RuntimeError("No blocks available for extract prompt.")
+
+        conservative = self.settings.is_groq()
+        slim = [
+            {
+                "block_id": b["block_id"],
+                "block_type": b.get("block_type"),
+                "text": b.get("text"),
+            }
+            for b in blocks
+            if b.get("block_id")
+        ]
+        if not slim:
+            raise RuntimeError("No blocks with block_id for extract prompt.")
+
+        def build(n: int) -> tuple[list[dict[str, Any]], str, int]:
+            chosen = slim[: max(1, n)]
+            chunk = {
+                "chunk_id": chunk_id,
+                "block_ids": [b["block_id"] for b in chosen],
+            }
+            user = self._user_prompt(
+                book=book,
+                chapter=chapter,
+                chunk=chunk,
+                blocks=chosen,
+                partial=partial,
+            )
+            tokens = estimate_request_tokens(
+                system, conservative=conservative
+            ) + estimate_request_tokens(user, conservative=conservative)
+            return chosen, user, tokens
+
+        # Fast path: everything fits.
+        all_blocks, all_user, all_tokens = build(len(slim))
+        if all_tokens <= prompt_budget:
+            return all_blocks, all_user, all_tokens
+
+        lo, hi = 1, len(slim)
+        best_n = 1
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            _, _, tokens = build(mid)
+            if tokens <= prompt_budget:
+                best_n = mid
+                lo = mid + 1
+            else:
+                hi = mid - 1
+
+        chosen, user, tokens = build(best_n)
+        # If even one block overflows, truncate its text so the call can proceed.
+        if tokens > prompt_budget and len(chosen) == 1:
+            chosen, user, tokens = self._truncate_single_block_prompt(
+                book=book,
+                chapter=chapter,
+                system=system,
+                block=chosen[0],
+                prompt_budget=prompt_budget,
+                chunk_id=chunk_id,
+                partial=partial,
+                conservative=conservative,
+            )
+
+        if len(chosen) < len(slim):
+            logger.warning(
+                "Extract prompt truncated chapter=%s chunk=%s blocks=%s/%s "
+                "prompt_tokens_est=%s budget=%s",
+                chapter.get("chapter_id"),
+                chunk_id,
+                len(chosen),
+                len(slim),
+                tokens,
+                prompt_budget,
+            )
+        return chosen, user, tokens
+
+    def _truncate_single_block_prompt(
+        self,
+        *,
+        book: dict[str, Any],
+        chapter: dict[str, Any],
+        system: str,
+        block: dict[str, Any],
+        prompt_budget: int,
+        chunk_id: str,
+        partial: bool,
+        conservative: bool,
+    ) -> tuple[list[dict[str, Any]], str, int]:
+        text = block.get("text") or ""
+        # Binary-search character length that fits.
+        lo, hi = 200, len(text)
+        best = text[:200]
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            trial = {
+                **block,
+                "text": text[:mid] + ("…" if mid < len(text) else ""),
+            }
+            user = self._user_prompt(
+                book=book,
+                chapter=chapter,
+                chunk={"chunk_id": chunk_id, "block_ids": [block["block_id"]]},
+                blocks=[trial],
+                partial=partial,
+            )
+            tokens = estimate_request_tokens(
+                system, conservative=conservative
+            ) + estimate_request_tokens(user, conservative=conservative)
+            if tokens <= prompt_budget:
+                best = trial["text"]
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        final = {**block, "text": best}
+        user = self._user_prompt(
+            book=book,
+            chapter=chapter,
+            chunk={"chunk_id": chunk_id, "block_ids": [block["block_id"]]},
+            blocks=[final],
+            partial=partial,
+        )
+        tokens = estimate_request_tokens(
+            system, conservative=conservative
+        ) + estimate_request_tokens(user, conservative=conservative)
+        return [final], user, tokens
+
+    def extract_chapter(
+        self,
+        book_id: str,
+        chapter: dict[str, Any],
+        *,
+        book: dict[str, Any] | None = None,
+        persist_status: bool = True,
+    ) -> dict[str, Any]:
+        """Extract Argument Spine partials for one chapter. Returns {chapter, summary}."""
+        book = book or self.db.get_book(book_id)
+        if not book:
+            raise KeyError(book_id)
+
+        chapter_id = chapter["chapter_id"]
+        prompt_text, prompt_hash = load_prompt("argument_spine_extraction.md")
+        system = self._system_prompt(prompt_text)
+
+        try:
+            source_path = self.fs.chapter_source_path(book_id, chapter_id)
+            chunks_path = self.fs.chapter_chunks_path(book_id, chapter_id)
+            if not source_path.exists() or not chunks_path.exists():
+                raise RuntimeError("Missing source or chunk artefacts for chapter.")
+
+            source = self.fs.read_json(source_path)
+            chunk_plan = self.fs.read_json(chunks_path)
+            blocks_by_id = {
+                b["block_id"]: b for b in (source.get("source_blocks") or [])
+            }
+            chunks = chunk_plan.get("chunks") or []
+            if not chunks:
+                raise RuntimeError("Chunk plan is empty.")
+
+            ch_working = {
+                **chapter,
+                "status": ChapterStatus.EXTRACTING.value,
+                "error": None,
+                "preview": {
+                    **(chapter.get("preview") or {}),
+                    "extract_chunk_index": 0,
+                    "extract_chunk_total": len(chunks),
+                },
+            }
+            if persist_status:
+                self._patch_chapter(book_id, chapter_id, ch_working)
+
+            partials: list[dict[str, Any]] = []
+
+            for i, chunk in enumerate(chunks):
+                chunk_id = chunk["chunk_id"]
+                ch_working = {
+                    **ch_working,
+                    "preview": {
+                        **(ch_working.get("preview") or {}),
+                        "extract_chunk_index": i + 1,
+                        "extract_chunk_total": len(chunks),
+                        "extract_chunk_id": chunk_id,
+                    },
+                }
+                if persist_status:
+                    self._patch_chapter(book_id, chapter_id, ch_working)
+                    # Touch book so status.updated_at moves and clients see activity.
+                    self.db.update_book(book_id, current_chapter_id=chapter_id)
+
+                allow_ids = list(chunk.get("block_ids") or [])
+                raw_blocks = [
+                    blocks_by_id[bid] for bid in allow_ids if bid in blocks_by_id
+                ]
+                prompt_budget = self.settings.extract_prompt_token_budget()
+                chunk_blocks, user, prompt_tokens = self._fit_blocks_to_prompt_budget(
+                    book=book,
+                    chapter=chapter,
+                    system=system,
+                    blocks=raw_blocks,
+                    prompt_budget=prompt_budget,
+                    chunk_id=chunk_id,
+                    partial=len(chunks) > 1,
+                )
+                logger.info(
+                    "Extracting chunk %s/%s chapter=%s book=%s chunk_id=%s "
+                    "blocks=%s/%s prompt_tokens_est=%s budget=%s",
+                    i + 1,
+                    len(chunks),
+                    chapter_id,
+                    book_id,
+                    chunk_id,
+                    len(chunk_blocks),
+                    len(raw_blocks),
+                    prompt_tokens,
+                    prompt_budget,
+                )
+                raw = self.llm.complete_json(system=system, user=user)
+                spine = self._postprocess_spine(
+                    raw,
+                    book_id=book_id,
+                    chapter_id=chapter_id,
+                    allowed={b["block_id"] for b in chunk_blocks},
+                    model=self.settings.llm_model if not self.settings.llm_mock else "mock",
+                    prompt_hash=prompt_hash,
+                )
+                partial_path = self.fs.chapter_spine_partial_path(
+                    book_id, chapter_id, chunk_id
+                )
+                self.fs.write_json(partial_path, spine)
+                partials.append(
+                    {
+                        "chunk_id": chunk_id,
+                        "path": str(partial_path),
+                        "node_count": len(spine.get("nodes") or []),
+                    }
+                )
+
+            # Single-chunk chapters: candidate spine is the one partial
+            if len(partials) == 1:
+                candidate = self.fs.read_json(
+                    self.fs.chapter_spine_partial_path(
+                        book_id, chapter_id, chunks[0]["chunk_id"]
+                    )
+                )
+                self.fs.write_json(
+                    self.fs.chapter_spine_candidate_path(book_id, chapter_id),
+                    candidate,
+                )
+            else:
+                # Multi-chunk: write a manifest candidate pointer for Phase 4 synthesis
+                self.fs.write_json(
+                    self.fs.chapter_spine_candidate_path(book_id, chapter_id),
+                    {
+                        "schema_version": "1.0",
+                        "book_id": book_id,
+                        "chapter_id": chapter_id,
+                        "language_modes": ["en"],
+                        "status": "needs_synthesis",
+                        "partials": partials,
+                        "nodes": [],
+                        "processing": {
+                            "model": self.settings.llm_model
+                            if not self.settings.llm_mock
+                            else "mock",
+                            "prompt_versions": {
+                                "argument_spine_extraction": f"3.0.0:{prompt_hash}"
+                            },
+                            "created_at": utc_now_iso(),
+                            "updated_at": utc_now_iso(),
+                        },
+                        "validation": {
+                            "schema_valid": False,
+                            "source_refs_valid": False,
+                            "bilingual_aligned": False,
+                            "checked_at": utc_now_iso(),
+                        },
+                    },
+                )
+
+            done = {
+                **ch_working,
+                "status": ChapterStatus.PENDING.value,
+                "preview": {
+                    **(chapter.get("preview") or {}),
+                    "partial_count": len(partials),
+                    "needs_synthesis": len(partials) > 1,
+                    "extraction": "ok",
+                },
+            }
+            return {
+                "chapter": done,
+                "summary": {
+                    "chapter_id": chapter_id,
+                    "ok": True,
+                    "partial_count": len(partials),
+                    "needs_synthesis": len(partials) > 1,
+                },
+            }
+        except Exception as exc:
+            logger.exception("Extraction failed chapter=%s book=%s", chapter_id, book_id)
+            failed = {
+                **chapter,
+                "status": ChapterStatus.FAILED.value,
+                "error": {
+                    "code": "extraction_failed",
+                    "message": str(exc),
+                    "details": None,
+                },
+            }
+            return {
+                "chapter": failed,
+                "summary": {
+                    "chapter_id": chapter_id,
+                    "ok": False,
+                    "reason": str(exc),
+                },
+            }
+
+    def _patch_chapter(
+        self, book_id: str, chapter_id: str, chapter: dict[str, Any]
+    ) -> None:
+        chapters = self.db.list_chapters(book_id)
+        self.db.replace_chapters(
+            book_id,
+            [chapter if c["chapter_id"] == chapter_id else c for c in chapters],
+        )
+
+    def _fail(
+        self,
+        book: dict[str, Any],
+        job_id: str | None,
+        message: str,
+        *,
+        details: dict[str, Any] | None = None,
+    ) -> None:
         book_id = book["book_id"]
-        error = {"code": "extraction_failed", "message": message, "details": None}
+        error = {
+            "code": "extraction_failed",
+            "message": message,
+            "details": details,
+        }
         self.db.update_book(
             book_id,
             processing_status=BookProcessingStatus.FAILED.value,

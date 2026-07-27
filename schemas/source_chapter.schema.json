@@ -43,7 +43,7 @@
         "section_id": { "type": ["string", "null"] },
         "block_type": {
           "type": "string",
-          "enum": [
+            "enum": [
             "heading",
             "paragraph",
             "quote",
@@ -54,6 +54,7 @@
             "image",
             "figure",
             "diagram",
+            "caption",
             "equation",
             "code",
             "sidebar",
