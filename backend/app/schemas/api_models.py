@@ -31,6 +31,7 @@ class BookMetadata(BaseModel):
     upload_timestamp: str
     completion_timestamp: str | None = None
     error: ErrorBody | None = None
+    converter: str | None = None
 
 
 class ChapterSummary(BaseModel):
@@ -40,6 +41,8 @@ class ChapterSummary(BaseModel):
     status: str
     retry_count: int = 0
     error: ErrorBody | None = None
+    # Human-readable mid-phase progress, e.g. "chunk 3/26"
+    progress: str | None = None
 
 
 class ProcessingStatusResponse(BaseModel):

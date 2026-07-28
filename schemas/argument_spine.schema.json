@@ -112,6 +112,22 @@
         "warnings": {
           "type": "array",
           "items": { "type": "string" }
+        },
+        "illustrative_example": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "title_en": { "type": ["string", "null"] },
+            "title_hinglish": { "type": ["string", "null"] },
+            "text_en": { "type": ["string", "null"] },
+            "text_hinglish": { "type": ["string", "null"] },
+            "example_type": { "type": ["string", "null"] },
+            "source_status": { "type": ["string", "null"] },
+            "source_block_ids": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
         }
       }
     }

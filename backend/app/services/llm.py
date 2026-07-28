@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from typing import Any, Protocol
 
 import httpx
@@ -24,10 +25,27 @@ _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE | re.MULTILINE
 DEFAULT_OPENAI_BASE = "https://api.openai.com/v1"
 DEFAULT_OPENAI_MODEL = "gpt-4o"
 DEFAULT_ANTHROPIC_BASE = "https://api.anthropic.com"
-DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6"
 ANTHROPIC_VERSION = "2023-06-01"
+# Retired Anthropic model IDs → recommended replacements (404 after retirement).
+RETIRED_ANTHROPIC_MODELS: dict[str, str] = {
+    "claude-sonnet-4-20250514": "claude-sonnet-4-6",
+    "claude-opus-4-20250514": "claude-opus-4-8",
+    "claude-sonnet-4-0": "claude-sonnet-4-6",
+    "claude-opus-4-0": "claude-opus-4-8",
+}
 
 VALID_PROVIDERS = frozenset({"openai", "anthropic", "openai_compatible"})
+
+# Anthropic 5-series and Opus 4.7/4.8 (and Fable/Mythos) removed the sampling
+# parameters — sending a non-default `temperature` returns a 400. Only forward
+# `temperature` to models that still accept it (e.g. claude-sonnet-4-6).
+_ANTHROPIC_NO_SAMPLING = ("sonnet-5", "opus-5", "opus-4-7", "opus-4-8", "fable-5", "mythos-5")
+
+
+def _anthropic_rejects_sampling(model: str) -> bool:
+    m = (model or "").lower()
+    return any(tag in m for tag in _ANTHROPIC_NO_SAMPLING)
 
 
 class LLMError(RuntimeError):
@@ -44,11 +62,111 @@ def parse_json_content(content: str) -> dict[str, Any]:
     text = _FENCE_RE.sub("", text).strip()
     try:
         data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise LLMError(f"LLM returned invalid JSON: {exc}") from exc
+    except json.JSONDecodeError:
+        # Models occasionally emit a raw newline/tab inside a JSON string value
+        # ("Invalid control character"). strict=False tolerates control characters
+        # inside strings; retry that way before failing.
+        try:
+            data = json.loads(text, strict=False)
+        except json.JSONDecodeError as exc:
+            hint = ""
+            if "Unterminated string" in str(exc) or "Expecting" in str(exc):
+                hint = (
+                    " Response looks truncated — raise LLM_MAX_TOKENS "
+                    f"(current response length {len(text)} chars) or use a smaller chapter/chunk."
+                )
+            raise LLMError(f"LLM returned invalid JSON: {exc}.{hint}") from exc
     if not isinstance(data, dict):
         raise LLMError("LLM JSON root must be an object")
     return data
+
+
+def _ensure_complete_generation(
+    *,
+    stop_reason: str | None,
+    finish_reason: str | None,
+    max_tokens: int,
+) -> None:
+    """Fail closed when the model stopped because the output budget was hit."""
+    if stop_reason == "max_tokens" or finish_reason == "length":
+        raise LLMError(
+            f"LLM output truncated at max_tokens={max_tokens}. "
+            "Increase LLM_MAX_TOKENS or reduce chapter/chunk size so the Argument Spine fits."
+        )
+
+
+def _httpx_timeout(settings: Settings) -> httpx.Timeout:
+    read = max(30.0, float(settings.llm_timeout_seconds or 300.0))
+    return httpx.Timeout(connect=30.0, read=read, write=60.0, pool=30.0)
+
+
+def _post_json(
+    *,
+    settings: Settings,
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    error_prefix: str,
+) -> dict[str, Any]:
+    """POST JSON with timeout + retries for transient network/read timeouts."""
+    attempts = max(1, int(settings.llm_http_retries or 0) + 1)
+    timeout = _httpx_timeout(settings)
+    last_exc: Exception | None = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                resp = client.post(url, headers=headers, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                if not isinstance(data, dict):
+                    raise LLMError(f"{error_prefix}: response JSON root must be an object")
+                return data
+        except httpx.HTTPStatusError as exc:
+            detail = (exc.response.text or "")[:500]
+            hint = ""
+            status = exc.response.status_code
+            detail_l = detail.lower()
+            if status in (413, 429) or "rate_limit" in detail_l or "request too large" in detail_l:
+                hint = (
+                    " Request exceeded the provider token budget. Groq free tier "
+                    "counts prompt_tokens + max_tokens against TPM (12k on 70b). "
+                    "Latest code auto-clamps both; set LLM_MAX_TOKENS=4096 and "
+                    "LLM_MAX_INPUT_TOKENS=6000 if you still 413 after pulling."
+                )
+            raise LLMError(
+                f"{error_prefix} {status}: {detail or exc}.{hint}"
+            ) from exc
+        except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.WriteTimeout) as exc:
+            last_exc = exc
+            logger.warning(
+                "%s timeout attempt %s/%s (read=%ss): %s",
+                error_prefix,
+                attempt,
+                attempts,
+                timeout.read,
+                exc,
+            )
+            if attempt >= attempts:
+                break
+            time.sleep(min(2.0 * attempt, 8.0))
+        except httpx.HTTPError as exc:
+            last_exc = exc
+            logger.warning(
+                "%s HTTP error attempt %s/%s: %s",
+                error_prefix,
+                attempt,
+                attempts,
+                exc,
+            )
+            if attempt >= attempts:
+                break
+            time.sleep(min(2.0 * attempt, 8.0))
+
+    raise LLMError(
+        f"{error_prefix} timed out after {attempts} attempt(s) "
+        f"(LLM_TIMEOUT_SECONDS={timeout.read}). Last error: {last_exc}"
+    ) from last_exc
 
 
 class OpenAICompatibleClient:
@@ -64,10 +182,11 @@ class OpenAICompatibleClient:
             )
 
         url = self.settings.llm_api_base.rstrip("/") + "/chat/completions"
+        max_tokens = self.settings.effective_llm_max_tokens()
         payload: dict[str, Any] = {
             "model": self.settings.llm_model,
             "temperature": self.settings.llm_temperature,
-            "max_tokens": self.settings.llm_max_tokens,
+            "max_tokens": max_tokens,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -81,19 +200,26 @@ class OpenAICompatibleClient:
             "Authorization": f"Bearer {self.settings.llm_api_key}",
             "Content-Type": "application/json",
         }
-        try:
-            with httpx.Client(timeout=120.0) as client:
-                resp = client.post(url, headers=headers, json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.HTTPError as exc:
-            raise LLMError(f"LLM HTTP error: {exc}") from exc
+        data = _post_json(
+            settings=self.settings,
+            url=url,
+            headers=headers,
+            payload=payload,
+            error_prefix="LLM HTTP",
+        )
 
         try:
-            content = data["choices"][0]["message"]["content"]
+            choice = data["choices"][0]
+            content = choice["message"]["content"]
+            finish_reason = choice.get("finish_reason")
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMError("Unexpected OpenAI-compatible response shape") from exc
 
+        _ensure_complete_generation(
+            stop_reason=None,
+            finish_reason=finish_reason if isinstance(finish_reason, str) else None,
+            max_tokens=max_tokens,
+        )
         return parse_json_content(content)
 
 
@@ -116,26 +242,43 @@ class AnthropicClient:
         else:
             url = base + "/v1/messages"
 
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.settings.llm_model,
             "max_tokens": self.settings.llm_max_tokens,
-            "temperature": self.settings.llm_temperature,
             "system": system,
             "messages": [{"role": "user", "content": user}],
         }
+        # Newer Anthropic models reject a non-default temperature with a 400, and
+        # run adaptive thinking by default (thinking shares the max_tokens budget,
+        # which can truncate a large Argument Spine mid-JSON). For those models,
+        # omit temperature and set thinking explicitly (default off — the whole
+        # output budget then goes to the JSON, avoiding truncation + thinking cost).
+        if _anthropic_rejects_sampling(self.settings.llm_model):
+            mode = (self.settings.llm_thinking or "off").lower()
+            payload["thinking"] = (
+                {"type": "adaptive"} if mode == "adaptive" else {"type": "disabled"}
+            )
+        else:
+            payload["temperature"] = self.settings.llm_temperature
         headers = {
             "x-api-key": self.settings.llm_api_key,
             "anthropic-version": ANTHROPIC_VERSION,
             "Content-Type": "application/json",
         }
-        try:
-            with httpx.Client(timeout=120.0) as client:
-                resp = client.post(url, headers=headers, json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.HTTPError as exc:
-            raise LLMError(f"Anthropic HTTP error: {exc}") from exc
+        data = _post_json(
+            settings=self.settings,
+            url=url,
+            headers=headers,
+            payload=payload,
+            error_prefix="Anthropic HTTP",
+        )
 
+        stop_reason = data.get("stop_reason")
+        _ensure_complete_generation(
+            stop_reason=stop_reason if isinstance(stop_reason, str) else None,
+            finish_reason=None,
+            max_tokens=self.settings.llm_max_tokens,
+        )
         content = _anthropic_text_content(data)
         return parse_json_content(content)
 
@@ -370,12 +513,15 @@ def _mock_nodes(chapter_id: str, cited: list[str], excerpt: str) -> list[dict[st
 
 
 def _apply_provider_defaults(settings: Settings) -> Settings:
-    """Apply Anthropic base/model defaults when still on OpenAI defaults."""
+    """Apply Anthropic base/model defaults when still on OpenAI or retired IDs."""
     updates: dict[str, Any] = {}
     if settings.llm_api_base.rstrip("/") == DEFAULT_OPENAI_BASE.rstrip("/"):
         updates["llm_api_base"] = DEFAULT_ANTHROPIC_BASE
-    if settings.llm_model == DEFAULT_OPENAI_MODEL:
+    model = settings.llm_model
+    if model == DEFAULT_OPENAI_MODEL:
         updates["llm_model"] = DEFAULT_ANTHROPIC_MODEL
+    elif model in RETIRED_ANTHROPIC_MODELS:
+        updates["llm_model"] = RETIRED_ANTHROPIC_MODELS[model]
     if not updates:
         return settings
     return settings.model_copy(update=updates)
