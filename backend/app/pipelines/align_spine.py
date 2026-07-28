@@ -66,6 +66,14 @@ def apply_hinglish_fields(
 ) -> dict[str, Any]:
     """Overlay hinglish fields onto a deep copy of the English spine (safe merge)."""
     out = copy.deepcopy(english)
+    # Some models echo the input wrapper (e.g. {"spine": {"nodes": [...]}}); unwrap
+    # to the object that actually carries the nodes array before matching by id.
+    if not isinstance(adapted.get("nodes"), list):
+        for key in ("spine", "argument_spine", "result", "output"):
+            inner = adapted.get(key)
+            if isinstance(inner, dict) and isinstance(inner.get("nodes"), list):
+                adapted = inner
+                break
     adapted_by_id = {
         n.get("id"): n for n in (adapted.get("nodes") or []) if n.get("id")
     }
@@ -75,6 +83,13 @@ def apply_hinglish_fields(
             continue
         node["statement_hinglish"] = src.get("statement_hinglish")
         node["explanation_hinglish"] = src.get("explanation_hinglish")
+        # Overlay the illustrative example's Hinglish onto the (deep-copied)
+        # English example, preserving its English text + metadata.
+        ex = node.get("illustrative_example")
+        src_ex = src.get("illustrative_example")
+        if isinstance(ex, dict) and isinstance(src_ex, dict):
+            ex["title_hinglish"] = src_ex.get("title_hinglish")
+            ex["text_hinglish"] = src_ex.get("text_hinglish")
     out["language_modes"] = ["en", "hinglish"]
     return out
 

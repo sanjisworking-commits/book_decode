@@ -79,6 +79,16 @@ export type ChapterListResponse = {
   chapters: ChapterSummary[];
 };
 
+export type IllustrativeExample = {
+  title_en?: string | null;
+  title_hinglish?: string | null;
+  text_en?: string | null;
+  text_hinglish?: string | null;
+  example_type?: string | null;
+  source_status?: string | null;
+  source_block_ids?: string[];
+};
+
 export type SpineNode = {
   id: string;
   node_type: NodeType;
@@ -93,6 +103,7 @@ export type SpineNode = {
   prev_id?: string | null;
   next_id?: string | null;
   warnings?: string[];
+  illustrative_example?: IllustrativeExample | null;
 };
 
 export type ArgumentSpine = {

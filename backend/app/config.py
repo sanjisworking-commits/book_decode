@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = "gpt-4o"
     llm_temperature: float = 0.2
+    # Anthropic 5-series / Opus 4.7+ run adaptive thinking by default, which shares the
+    # max_tokens budget and can truncate a large Argument Spine mid-JSON. For this
+    # prescriptive extract/synthesise task, default thinking off. off | adaptive.
+    llm_thinking: str = "off"
     # Full-chapter Argument Spines often exceed 8k output tokens when truncated mid-JSON.
     llm_max_tokens: int = 16384
     llm_mock: bool = False

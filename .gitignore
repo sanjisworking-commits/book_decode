@@ -39,6 +39,8 @@ data/books/*
 !data/books/.gitkeep
 data/logs/*
 !data/logs/.gitkeep
+# Backend runtime data (parallel tree written by the pipeline)
+backend/data/
 *.db
 *.sqlite
 *.sqlite3

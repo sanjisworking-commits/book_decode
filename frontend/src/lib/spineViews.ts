@@ -1,5 +1,6 @@
 import type {
   ArgumentSpine,
+  IllustrativeExample,
   LanguageMode,
   NodeType,
   SourceStatus,
@@ -13,10 +14,23 @@ export type ViewText = {
   blockIds: string[];
 };
 
+/** An AI-generated everyday analogy for a logic-chain node (never book-sourced). */
+export type ExampleView = {
+  title: string | null;
+  text: string;
+  exampleType: string | null;
+};
+
+/** A logic-chain node: its statement, "why it matters" (explanation), own
+ * source chips, and an optional illustrative example. */
+export type LogicStepView = ViewText & {
+  example: ExampleView | null;
+};
+
 export type DecodeView = {
   claim: ViewText | null;
   meaning: ViewText | null;
-  logicChain: ViewText[];
+  logicChain: LogicStepView[];
   example: ViewText | null;
   counter: ViewText | null;
 };
@@ -48,6 +62,23 @@ function pick(n: SpineNode | undefined, lang: LanguageMode): ViewText | null {
   };
 }
 
+function pickExample(
+  ex: IllustrativeExample | null | undefined,
+  lang: LanguageMode,
+): ExampleView | null {
+  if (!ex) return null;
+  const text =
+    lang === "hinglish" ? ex.text_hinglish ?? ex.text_en : ex.text_en;
+  if (!text || !String(text).trim()) return null;
+  const title =
+    lang === "hinglish" ? ex.title_hinglish ?? ex.title_en : ex.title_en;
+  return {
+    title: title && String(title).trim() ? title : null,
+    text,
+    exampleType: ex.example_type ?? null,
+  };
+}
+
 function byType(spine: ArgumentSpine, t: NodeType): SpineNode | undefined {
   return spine.nodes.find((n) => n.node_type === t);
 }
@@ -63,21 +94,17 @@ export function toDecodeView(spine: ArgumentSpine, lang: LanguageMode): DecodeVi
   const claim = pick(claimNode, lang);
   const onesentence = pick(byType(spine, "one_sentence_decode"), lang);
 
-  let meaning: ViewText | null = null;
-  if (claim?.explanation) {
-    meaning = {
-      statement: claim.explanation,
-      explanation: null,
-      status: claim.status,
-      blockIds: claim.blockIds,
-    };
-  } else if (onesentence) {
-    meaning = onesentence;
-  }
+  // The claim's explanation now renders as the claim card's support subheading,
+  // so Meaning is the plain one-sentence restatement (one_sentence_decode).
+  const meaning = onesentence;
 
   const logicChain = allByType(spine, "reasoning_steps")
-    .map((n) => pick(n, lang))
-    .filter((v): v is ViewText => v != null);
+    .map((n): LogicStepView | null => {
+      const base = pick(n, lang);
+      if (!base) return null;
+      return { ...base, example: pickExample(n.illustrative_example, lang) };
+    })
+    .filter((v): v is LogicStepView => v != null);
 
   const examples = allByType(spine, "evidence_and_examples")
     .map((n) => pick(n, lang))

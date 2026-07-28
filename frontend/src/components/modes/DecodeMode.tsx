@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { shortBlockId, sourceStatusColor } from "../../lib/constants";
-import type { DecodeView, ViewText } from "../../lib/spineViews";
+import type { DecodeView, LogicStepView, ViewText } from "../../lib/spineViews";
 import type { LanguageMode } from "../../types/api";
 
 type Props = {
@@ -78,6 +79,192 @@ function SourceChips({
   );
 }
 
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: string;
+}) {
+  return (
+    <button
+      type="button"
+      className="mono"
+      onClick={onClick}
+      style={{
+        fontSize: 10,
+        fontWeight: 600,
+        letterSpacing: "0.12em",
+        textTransform: "uppercase",
+        padding: "6px 12px",
+        border: 0,
+        borderBottom: `2px solid ${active ? "var(--dr-accent)" : "transparent"}`,
+        background: "transparent",
+        color: active ? "var(--dr-accent)" : "color-mix(in srgb, var(--dr-ink) 45%, transparent)",
+        cursor: "pointer",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function LogicStep({
+  step,
+  onOpenSources,
+}: {
+  step: LogicStepView;
+  onOpenSources: (ids: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const hasWhy = Boolean(step.explanation && step.explanation.trim());
+  const hasExample = Boolean(step.example);
+  const [tab, setTab] = useState<"why" | "example">(hasWhy ? "why" : "example");
+  const canExpand = hasWhy || hasExample || step.blockIds.length > 0;
+  const showTabs = hasWhy && hasExample;
+  const activeTab = showTabs ? tab : hasWhy ? "why" : "example";
+
+  return (
+    <div
+      style={{
+        background: "var(--dr-node)",
+        border: "1px solid color-mix(in srgb, var(--dr-ink) 18%, transparent)",
+        borderLeft: `3px solid ${sourceStatusColor(step.status)}`,
+        borderRadius: 2,
+        padding: "14px 16px",
+      }}
+    >
+      <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+        <div
+          className="mono"
+          style={{ flex: 1, fontSize: 11, color: "var(--dr-ink)", lineHeight: 1.45 }}
+        >
+          {step.statement}
+        </div>
+        {canExpand && (
+          <button
+            type="button"
+            className="mono"
+            onClick={() => setOpen((o) => !o)}
+            aria-expanded={open}
+            style={{
+              flex: "none",
+              fontSize: 10,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              color: "var(--dr-accent)",
+              background: "transparent",
+              border: 0,
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {open ? "collapse −" : "expand +"}
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div style={{ marginTop: 12 }}>
+          {showTabs && (
+            <div
+              style={{
+                display: "flex",
+                gap: 4,
+                borderBottom: "1px solid color-mix(in srgb, var(--dr-ink) 14%, transparent)",
+                marginBottom: 12,
+              }}
+            >
+              <TabButton active={activeTab === "why"} onClick={() => setTab("why")}>
+                Why it matters
+              </TabButton>
+              <TabButton active={activeTab === "example"} onClick={() => setTab("example")}>
+                Example
+              </TabButton>
+            </div>
+          )}
+
+          {activeTab === "why" && hasWhy && (
+            <div
+              style={{
+                background: "color-mix(in srgb, var(--dr-accent) 8%, transparent)",
+                borderLeft: "3px solid var(--dr-accent)",
+                borderRadius: 2,
+                padding: "12px 14px",
+              }}
+            >
+              {!showTabs && <MicroLabel>Why it matters</MicroLabel>}
+              <div
+                style={{
+                  fontFamily: "var(--dr-font-serif)",
+                  fontSize: 14.5,
+                  lineHeight: 1.55,
+                  color: "var(--dr-ink)",
+                }}
+              >
+                {step.explanation}
+              </div>
+              <SourceChips item={step} onOpenSources={onOpenSources} />
+            </div>
+          )}
+
+          {activeTab === "example" && step.example && (
+            <div
+              style={{
+                background: "var(--dr-card)",
+                border: "1px dashed color-mix(in srgb, var(--dr-accent) 55%, transparent)",
+                borderRadius: 2,
+                padding: "12px 14px",
+              }}
+            >
+              {!showTabs && <MicroLabel>Example</MicroLabel>}
+              {step.example.title && (
+                <div
+                  className="mono"
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    letterSpacing: "0.04em",
+                    color: "var(--dr-accent)",
+                    marginBottom: 6,
+                  }}
+                >
+                  {step.example.title}
+                </div>
+              )}
+              <div
+                style={{
+                  fontFamily: "var(--dr-font-serif)",
+                  fontStyle: "italic",
+                  fontSize: 14.5,
+                  lineHeight: 1.55,
+                  color: "var(--dr-ink)",
+                }}
+              >
+                {step.example.text}
+              </div>
+              <div
+                className="mono"
+                style={{
+                  fontSize: 9,
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  color: "color-mix(in srgb, var(--dr-ink) 45%, transparent)",
+                  marginTop: 10,
+                }}
+              >
+                ✦ AI-generated example · not from the book
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function DecodeMode({ view, onOpenSources, isMobile }: Props) {
   const hasBody =
     view.claim ||
@@ -129,16 +316,34 @@ export function DecodeMode({ view, onOpenSources, isMobile }: Props) {
               <MicroLabel>Claim under test</MicroLabel>
               <div
                 style={{
-                  fontFamily: "var(--dr-font-serif)",
-                  fontSize: 18,
-                  fontWeight: 600,
-                  lineHeight: 1.35,
-                  color: "var(--dr-ink)",
                   borderLeft: `3px solid ${sourceStatusColor(view.claim.status)}`,
                   paddingLeft: 12,
                 }}
               >
-                {view.claim.statement}
+                <div
+                  style={{
+                    fontFamily: "var(--dr-font-serif)",
+                    fontSize: 21,
+                    fontWeight: 600,
+                    lineHeight: 1.28,
+                    color: "var(--dr-ink)",
+                  }}
+                >
+                  {view.claim.statement}
+                </div>
+                {view.claim.explanation && (
+                  <div
+                    style={{
+                      fontFamily: "var(--dr-font-serif)",
+                      fontSize: 14.5,
+                      lineHeight: 1.55,
+                      color: "color-mix(in srgb, var(--dr-ink) 70%, transparent)",
+                      marginTop: 8,
+                    }}
+                  >
+                    {view.claim.explanation}
+                  </div>
+                )}
               </div>
               <SourceChips item={view.claim} onOpenSources={onOpenSources} />
             </div>
@@ -167,27 +372,7 @@ export function DecodeMode({ view, onOpenSources, isMobile }: Props) {
             <div style={{ display: "flex", flexDirection: "column", alignItems: "stretch" }}>
               {view.logicChain.map((step, i) => (
                 <div key={`${step.statement}-${i}`}>
-                  <div
-                    style={{
-                      background: "var(--dr-node)",
-                      border: "1px solid color-mix(in srgb, var(--dr-ink) 18%, transparent)",
-                      borderLeft: `3px solid ${sourceStatusColor(step.status)}`,
-                      borderRadius: 2,
-                      padding: "14px 16px",
-                    }}
-                  >
-                    <div
-                      className="mono"
-                      style={{
-                        fontSize: 11,
-                        color: "var(--dr-ink)",
-                        lineHeight: 1.45,
-                      }}
-                    >
-                      {step.statement}
-                    </div>
-                    <SourceChips item={step} onOpenSources={onOpenSources} />
-                  </div>
+                  <LogicStep step={step} onOpenSources={onOpenSources} />
                   {i < view.logicChain.length - 1 && (
                     <div
                       style={{

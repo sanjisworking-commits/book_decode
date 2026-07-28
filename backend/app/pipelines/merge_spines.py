@@ -55,6 +55,23 @@ def collect_claim_statements(partials: list[dict[str, Any]]) -> set[str]:
     return out
 
 
+_SUPPORT_STOPWORDS = {
+    "the", "a", "an", "and", "or", "but", "of", "to", "in", "on", "for", "with",
+    "that", "this", "these", "those", "is", "are", "was", "were", "be", "been",
+    "it", "its", "as", "by", "at", "from", "not", "no", "which", "who", "what",
+    "how", "why", "than", "then", "so", "such", "into", "each", "any", "all",
+    "can", "may", "must", "will", "would", "should", "because", "about",
+}
+
+
+def _content_words(text: str | None) -> set[str]:
+    return {
+        w
+        for w in normalise_statement(text).split()
+        if len(w) > 2 and w not in _SUPPORT_STOPWORDS
+    }
+
+
 def claim_supported_by_partials(statement: str | None, partial_claims: set[str]) -> bool:
     norm = normalise_statement(statement)
     if not norm:
@@ -67,7 +84,19 @@ def claim_supported_by_partials(statement: str | None, partial_claims: set[str])
         # Allow mild synthesis stitching: statement is concatenation/subset of known claims
         if norm in claim or claim in norm:
             return True
-    return False
+    # Synthesis legitimately *rewords and merges* partial statements (e.g. one
+    # central_claim built from two chunks' claims), so an exact/substring match
+    # often fails. Keep a node when most of its content words already appear
+    # across the partials — a genuinely fabricated claim would introduce many
+    # novel words and fall below the threshold.
+    words = _content_words(statement)
+    if not words:
+        return True
+    union: set[str] = set()
+    for claim in partial_claims:
+        union |= _content_words(claim)
+    covered = len(words & union) / len(words)
+    return covered >= 0.6
 
 
 def merge_partial_spines(

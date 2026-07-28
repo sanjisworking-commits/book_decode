@@ -276,7 +276,7 @@ class AdaptPipeline:
         en_proc = english.get("processing") if isinstance(english.get("processing"), dict) else {}
         for k, v in (en_proc.get("prompt_versions") or {}).items():
             prompt_versions.setdefault(k, v)
-        prompt_versions["hinglish_adaptation"] = f"5.0.0:{prompt_hash}"
+        prompt_versions["hinglish_adaptation"] = f"6.0.0:{prompt_hash}"
 
         notes = (bilingual.get("confidence_summary") or {}).get("notes") or ""
         if schema_errors:
@@ -327,6 +327,9 @@ class AdaptPipeline:
             "spine": english,
             "style": {
                 "register": "natural_hinglish",
+                "hindi_script": "devanagari",
+                "romanize_hindi": False,
+                "keep_english_terms_in_latin": True,
                 "retain_english_terms": True,
                 "avoid_literal_translation": True,
                 "avoid_sanskritised_hindi": True,
@@ -335,7 +338,10 @@ class AdaptPipeline:
         return (
             "Adapt this English Argument Spine into Hindi-English.\n"
             "Preserve all node ids, types, English fields, and source_block_ids.\n"
-            "Fill statement_hinglish and explanation_hinglish only.\n\n"
+            "Fill statement_hinglish and explanation_hinglish only.\n"
+            "Return a JSON object with a top-level `nodes` array — do NOT wrap it "
+            "in a `spine` key. Each node keeps its `id` and adds "
+            "`statement_hinglish` and `explanation_hinglish`.\n\n"
             "===ENGLISH_SPINE_JSON===\n"
             f"{json.dumps(payload, ensure_ascii=False)}"
         )

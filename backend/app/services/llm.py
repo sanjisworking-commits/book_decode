@@ -37,6 +37,16 @@ RETIRED_ANTHROPIC_MODELS: dict[str, str] = {
 
 VALID_PROVIDERS = frozenset({"openai", "anthropic", "openai_compatible"})
 
+# Anthropic 5-series and Opus 4.7/4.8 (and Fable/Mythos) removed the sampling
+# parameters — sending a non-default `temperature` returns a 400. Only forward
+# `temperature` to models that still accept it (e.g. claude-sonnet-4-6).
+_ANTHROPIC_NO_SAMPLING = ("sonnet-5", "opus-5", "opus-4-7", "opus-4-8", "fable-5", "mythos-5")
+
+
+def _anthropic_rejects_sampling(model: str) -> bool:
+    m = (model or "").lower()
+    return any(tag in m for tag in _ANTHROPIC_NO_SAMPLING)
+
 
 class LLMError(RuntimeError):
     pass
@@ -52,14 +62,20 @@ def parse_json_content(content: str) -> dict[str, Any]:
     text = _FENCE_RE.sub("", text).strip()
     try:
         data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        hint = ""
-        if "Unterminated string" in str(exc) or "Expecting" in str(exc):
-            hint = (
-                " Response looks truncated — raise LLM_MAX_TOKENS "
-                f"(current response length {len(text)} chars) or use a smaller chapter/chunk."
-            )
-        raise LLMError(f"LLM returned invalid JSON: {exc}.{hint}") from exc
+    except json.JSONDecodeError:
+        # Models occasionally emit a raw newline/tab inside a JSON string value
+        # ("Invalid control character"). strict=False tolerates control characters
+        # inside strings; retry that way before failing.
+        try:
+            data = json.loads(text, strict=False)
+        except json.JSONDecodeError as exc:
+            hint = ""
+            if "Unterminated string" in str(exc) or "Expecting" in str(exc):
+                hint = (
+                    " Response looks truncated — raise LLM_MAX_TOKENS "
+                    f"(current response length {len(text)} chars) or use a smaller chapter/chunk."
+                )
+            raise LLMError(f"LLM returned invalid JSON: {exc}.{hint}") from exc
     if not isinstance(data, dict):
         raise LLMError("LLM JSON root must be an object")
     return data
@@ -226,13 +242,24 @@ class AnthropicClient:
         else:
             url = base + "/v1/messages"
 
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.settings.llm_model,
             "max_tokens": self.settings.llm_max_tokens,
-            "temperature": self.settings.llm_temperature,
             "system": system,
             "messages": [{"role": "user", "content": user}],
         }
+        # Newer Anthropic models reject a non-default temperature with a 400, and
+        # run adaptive thinking by default (thinking shares the max_tokens budget,
+        # which can truncate a large Argument Spine mid-JSON). For those models,
+        # omit temperature and set thinking explicitly (default off — the whole
+        # output budget then goes to the JSON, avoiding truncation + thinking cost).
+        if _anthropic_rejects_sampling(self.settings.llm_model):
+            mode = (self.settings.llm_thinking or "off").lower()
+            payload["thinking"] = (
+                {"type": "adaptive"} if mode == "adaptive" else {"type": "disabled"}
+            )
+        else:
+            payload["temperature"] = self.settings.llm_temperature
         headers = {
             "x-api-key": self.settings.llm_api_key,
             "anthropic-version": ANTHROPIC_VERSION,
