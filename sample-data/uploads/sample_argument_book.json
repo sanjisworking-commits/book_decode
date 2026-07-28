@@ -1,0 +1,82 @@
+{
+  "book_title": "Decisions in Writing (Demo)",
+  "book_id": "demo-decisions-in-writing",
+  "chapters": [
+    {
+      "schema_version": "2.0",
+      "book_id": "demo-decisions-in-writing",
+      "chapter_id": "ch01",
+      "chapter_number": 1,
+      "chapter_title": "Why Teams Should Decide in Writing",
+      "heading_hierarchy": [
+        "Decisions in Writing",
+        "Chapter 1"
+      ],
+      "source_blocks": [
+        {
+          "block_id": "demo-decisions-in-writing.ch01.sec01.block001",
+          "block_type": "paragraph",
+          "text": "Most teams make their most important decisions out loud, in meetings, and then move on. The decision feels settled in the moment, but nothing durable is created. Weeks later, no two people remember it the same way. This chapter argues that teams should record their decisions in writing at the moment they are made, and that doing so is not bureaucratic overhead but the single cheapest way to avoid re-litigating the same questions forever.",
+          "order_index": 0,
+          "section_id": "sec01"
+        },
+        {
+          "block_id": "demo-decisions-in-writing.ch01.sec01.block002",
+          "block_type": "paragraph",
+          "text": "The core problem is that human memory of a conversation is reconstructive, not a recording. Each participant walks away with a slightly different version, shaped by what they cared about most. There is no shared artifact to check against, so when the versions diverge, the loudest or most senior person's memory usually wins by default.",
+          "order_index": 1,
+          "section_id": "sec01"
+        },
+        {
+          "block_id": "demo-decisions-in-writing.ch01.sec01.block003",
+          "block_type": "paragraph",
+          "text": "Writing a decision down changes what counts as 'done.' A verbal agreement is done when everyone stops talking; a written one is done when someone can read it back and it still says what you meant. That second bar is much higher, and clearing it forces the group to notice disagreements that a nod in a meeting hides.",
+          "order_index": 2,
+          "section_id": "sec01"
+        },
+        {
+          "block_id": "demo-decisions-in-writing.ch01.sec01.block004",
+          "block_type": "paragraph",
+          "text": "A written decision is also searchable and auditable. Six months on, a new team member can find not just what was decided but why, and which options were rejected. That record turns a decision into an asset the whole organization can build on, rather than a fact trapped in a few people's heads.",
+          "order_index": 3,
+          "section_id": "sec01"
+        },
+        {
+          "block_id": "demo-decisions-in-writing.ch01.sec01.block005",
+          "block_type": "paragraph",
+          "text": "For teams that work across time zones, the benefit compounds. Asynchronous teams cannot rely on everyone being in the room, so a shared written record is the only thing that keeps distributed people pointed in the same direction without a constant stream of clarifying calls.",
+          "order_index": 4,
+          "section_id": "sec01"
+        },
+        {
+          "block_id": "demo-decisions-in-writing.ch01.sec01.block006",
+          "block_type": "paragraph",
+          "text": "Consider a product team that argued for weeks about whether to support offline mode. In a meeting they finally 'decided' to defer it. Two months later the debate reopened from scratch, because no one had written down that the reason was a specific database limitation, not a lack of interest. A one-paragraph note would have closed the question permanently.",
+          "order_index": 5,
+          "section_id": "sec01"
+        },
+        {
+          "block_id": "demo-decisions-in-writing.ch01.sec01.block007",
+          "block_type": "paragraph",
+          "text": "The obvious objection is that writing is slow, and that forcing a note after every decision will bog a fast-moving team down in documentation. If the bar is a polished document, this is a real cost.",
+          "order_index": 6,
+          "section_id": "sec01"
+        },
+        {
+          "block_id": "demo-decisions-in-writing.ch01.sec01.block008",
+          "block_type": "paragraph",
+          "text": "But the objection assumes more ceremony than the practice needs. The unit is a few sentences — the decision, the main reason, and the date — not a report. Written at the moment of decision, it takes less time than the first follow-up conversation it prevents.",
+          "order_index": 7,
+          "section_id": "sec01"
+        },
+        {
+          "block_id": "demo-decisions-in-writing.ch01.sec01.block009",
+          "block_type": "paragraph",
+          "text": "If this is right, the payoff is that a team stops paying interest on the same decisions over and over. The questions that were genuinely settled stay settled, attention moves to new problems, and the organization accumulates a memory that outlives any individual's recollection of a meeting.",
+          "order_index": 8,
+          "section_id": "sec01"
+        }
+      ]
+    }
+  ]
+}

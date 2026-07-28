@@ -8,6 +8,71 @@ EPUB → chapter extraction → AI Argument Spine → English + Hindi-English �
 
 This is **not** an ebook reader, general summariser, chatbot, or bookstore.
 
+## Run it locally
+
+You can run the whole app on your machine and decode a **sample book** without an EPUB — no API key required for a first look.
+
+**Prerequisites:** Python 3.11+ and Node 18+.
+
+### 1. Backend (API)
+
+```bash
+cd backend
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp ../.env.example ../.env      # config lives in the repo-root .env
+```
+
+Edit the repo-root `.env` and pick one LLM mode:
+
+- **No key (fastest):** `LLM_MOCK=true` — runs the full pipeline with placeholder decodes, zero API calls.
+- **Real decodes:** set a provider + key, e.g. Anthropic:
+
+  ```bash
+  LLM_MOCK=false
+  LLM_PROVIDER=anthropic
+  LLM_API_BASE=https://api.anthropic.com
+  LLM_API_KEY=sk-ant-...
+  LLM_MODEL=claude-sonnet-5
+  ```
+
+Start the API:
+
+```bash
+cd backend && uvicorn app.main:app --reload --port 8003
+```
+
+### 2. Frontend (UI)
+
+```bash
+cd frontend && npm install && npm run dev
+```
+
+Open **http://localhost:5173** (Vite proxies `/books`, `/demo`, `/health` to the API on `:8003`).
+
+### 3. Decode a sample book (no EPUB)
+
+Ready-to-upload source JSON ships in [`sample-data/uploads/`](sample-data/uploads/):
+
+- [`sample_argument_book.json`](sample-data/uploads/sample_argument_book.json) — a short, original demo book (*"Decisions in Writing"*) in the upload schema.
+
+**Via the UI:** on the upload screen choose **source JSON** and select that file. A book is created and each chapter decodes into the **Decode / Remember** reading room, in English and Devanagari Hindi-English.
+
+**Via the API:**
+
+```bash
+# 1) ingest the sample (no LLM call) → returns { "book_id": "...", ... }
+curl -s -X POST http://127.0.0.1:8003/books/upload-json \
+  -F "file=@sample-data/uploads/sample_argument_book.json"
+
+# 2) run the decode for that book
+curl -s -X POST http://127.0.0.1:8003/books/<book_id>/process
+```
+
+With `LLM_MOCK=true` this returns instantly with placeholder content; with a real key it produces a full source-grounded Argument Spine (the sample is one short chapter — cent-level cost on Sonnet).
+
+> Bring your own book by uploading a `source_chapter` / whole-book JSON in the same shape (see [`schemas/source_chapter.schema.json`](schemas/source_chapter.schema.json) and [`docs/DATA_SCHEMA.md`](docs/DATA_SCHEMA.md)).
+
 ## Current phase
 
 **Phase 7 — Frontend implementation**
